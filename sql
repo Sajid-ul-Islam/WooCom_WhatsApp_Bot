@@ -38,6 +38,16 @@ create table if not exists public.orders (
     created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+-- WhatsApp Users table (for conversational memory and human handoff)
+create table if not exists public.whatsapp_users (
+    phone_number text primary key,
+    first_name text,
+    chat_history jsonb default '[]'::jsonb,
+    command_counts jsonb default '{}'::jsonb,
+    bot_paused boolean default false,
+    last_active timestamp with time zone default timezone('utc'::text, now())
+);
+
 -- Vector similarity search helper function
 create or replace function match_products (
   query_embedding vector(384),

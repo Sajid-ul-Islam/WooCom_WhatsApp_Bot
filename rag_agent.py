@@ -55,19 +55,22 @@ class RAGAgent:
             logger.error(f"Failed to generate query embedding: {e}")
             return []
 
-    async def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
+    async def _call_llm(self, system_prompt: str, user_prompt: str, history: list = None) -> str:
         """Call the configured LLM API (OpenAI or Anthropic)."""
         if self.provider == "openai":
             client = self._get_openai_client()
             if not client:
                 return "Error: OpenAI client not initialized. Check API keys."
+            
+            messages = [{"role": "system", "content": system_prompt}]
+            if history:
+                messages.extend(history)
+            messages.append({"role": "user", "content": user_prompt})
+            
             try:
                 response = await client.chat.completions.create(
                     model=self.openai_model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
+                    messages=messages,
                     max_tokens=600,
                     temperature=0.3
                 )
@@ -81,14 +84,17 @@ class RAGAgent:
             if not client:
                 return "Error: Anthropic client not initialized. Check API keys."
             try:
+                messages_list = []
+                if history:
+                    messages_list.extend(history)
+                messages_list.append({"role": "user", "content": user_prompt})
+
                 response = await client.messages.create(
                     model=self.anthropic_model,
                     max_tokens=600,
                     temperature=0.3,
                     system=system_prompt,
-                    messages=[
-                        {"role": "user", "content": user_prompt}
-                    ]
+                    messages=messages_list
                 )
                 return response.content[0].text
             except Exception as e:
@@ -98,7 +104,7 @@ class RAGAgent:
         else:
             return f"Error: Unsupported LLM Provider '{self.provider}'"
 
-    async def answer_query(self, query: str) -> Dict[str, Any]:
+    async def answer_query(self, query: str, history: list = None) -> Dict[str, Any]:
         """
         Processes user query: finds similar products and builds a conversational response.
         Returns a dict: {"text": "Formatted text response", "products": list_of_matching_products}
@@ -145,7 +151,7 @@ class RAGAgent:
         user_prompt = f"Context:\n{context_str}\n\nUser Query: {query}\n\nProvide your sales assistant response:"
 
         # 5. Call LLM
-        response_text = await self._call_llm(system_prompt, user_prompt)
+        response_text = await self._call_llm(system_prompt, user_prompt, history)
         
         return {
             "text": response_text,

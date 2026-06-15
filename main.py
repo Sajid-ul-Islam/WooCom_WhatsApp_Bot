@@ -334,9 +334,16 @@ async def handle_ai_search(to: str, query: str):
     """Passes user text query to the RAG Agent and returns LLM and matching products."""
     await wa.send_text_message(to, "🔍 Searching the catalog, please wait...")
     
-    result = await agent.answer_query(query)
+    history = await db.get_user_history(to)
+    
+    result = await agent.answer_query(query, history=history)
     response_text = result["text"]
     matching_products = result["products"]
+    
+    history.append({"role": "user", "content": query})
+    history.append({"role": "assistant", "content": response_text})
+    history = history[-10:] # keep last 10 messages
+    await db.update_user_history(to, history)
     
     # Send the LLM-generated reply
     await wa.send_text_message(to, response_text)
@@ -436,6 +443,21 @@ async def whatsapp_webhook(request: Request):
 
     # 2. Route payload
     try:
+        # HUMAN HANDOFF CHECK
+        await db.upsert_user(from_number)
+        
+        if incoming_text:
+            text_lower = incoming_text.lower()
+            if text_lower in ["/resume", "resume", "resume bot"]:
+                await db.set_bot_paused(from_number, False)
+                await wa.send_text_message(from_number, "✅ Bot resumed. How can I help you?")
+                return JSONResponse({"status": "ok"})
+                
+        is_paused = await db.is_bot_paused(from_number)
+        if is_paused:
+            logger.info(f"Bot paused for {from_number}. Ignoring message.")
+            return JSONResponse({"status": "ignored"})
+            
         if action_id:
             logger.info(f"Processing action '{action_id}' from {from_number}")
             
@@ -512,6 +534,11 @@ async def whatsapp_webhook(request: Request):
                 except Exception:
                     await wa.send_text_message(from_number, "To remove an item, type *Remove [Product ID]* (e.g. *Remove 105*).")
                     
+            # Pause bot
+            elif text_lower in ["/talktohuman", "talk to human", "human", "support"]:
+                await db.set_bot_paused(from_number, True)
+                await wa.send_text_message(from_number, "⏸️ I have paused my automated responses. A human agent will be with you shortly. Type */resume* when you want me to take over again.")
+                
             # Process checkout command
             elif text_lower.startswith("checkout:") or text_lower.startswith("checkout"):
                 await handle_process_checkout(from_number, incoming_text)
@@ -530,3 +557,24 @@ async def whatsapp_webhook(request: Request):
             pass
 
     return JSONResponse({"status": "ok"})
+
+@app.post("/woo-webhook")
+async def woo_webhook(request: Request):
+    """Webhook to receive order updates from WooCommerce and notify users via WhatsApp."""
+    try:
+        body = await request.json()
+        logger.info(f"WooCommerce webhook received: {body.get('id')}")
+        
+        status = body.get("status")
+        billing = body.get("billing", {})
+        phone = billing.get("phone")
+        order_id = body.get("id")
+        
+        if phone and status and order_id:
+            message = f"🔔 *Order Update*\n\nYour order #{order_id} is now: *{status.upper()}*."
+            await wa.send_text_message(phone, message)
+            
+        return JSONResponse({"status": "ok"})
+    except Exception as e:
+        logger.error(f"Error processing woo webhook: {e}")
+        return JSONResponse({"status": "error"})
