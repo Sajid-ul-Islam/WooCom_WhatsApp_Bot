@@ -104,6 +104,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+@app.get("/")
+async def health_check():
+    """Root health check — confirms the app is running."""
+    return {"status": "ok", "service": "WooCom WhatsApp Bot"}
+
 # --- Routing Logic for Chatbot ---
 
 async def handle_main_menu(to: str):
