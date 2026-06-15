@@ -281,3 +281,24 @@ class DatabaseClient:
             )
         except Exception as e:
             logger.error(f"Error setting user state for {phone}: {e}")
+
+    # ==================== APP CONFIG / SECRETS ====================
+
+    async def get_app_config(self) -> dict:
+        """
+        Fetch all key-value pairs from the 'config' table in Supabase.
+        Expected table schema:  key (TEXT PK), value (TEXT)
+        Returns a dict like: {"OPENAI_API_KEY": "sk-...", "LLM_PROVIDER": "openai", ...}
+        """
+        if not self.client:
+            return {}
+        try:
+            response = await self._run_sync(
+                lambda: self.client.table("config").select("key, value").execute()
+            )
+            if response.data:
+                return {row["key"]: row["value"] for row in response.data}
+            return {}
+        except Exception as e:
+            logger.error(f"Error fetching app config from Supabase: {e}")
+            return {}

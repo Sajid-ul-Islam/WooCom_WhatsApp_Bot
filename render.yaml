@@ -1,0 +1,45 @@
+# render.yaml — Render Blueprint for WooCom WhatsApp Bot
+# Docs: https://docs.render.com/blueprint-spec
+
+services:
+  - type: web
+    name: woocom-whatsapp-bot
+    runtime: docker
+    plan: free  # Change to "starter" or "standard" for production
+    region: singapore  # closest to BD; alternatives: oregon, ohio, frankfurt
+    dockerfilePath: ./Dockerfile
+    envVars:
+      # --- Required: Supabase (needed before app starts to fetch other keys) ---
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+
+      # --- Required: WhatsApp Cloud API ---
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_WEBHOOK_VERIFY_TOKEN
+        sync: false
+
+      # --- Required: WooCommerce ---
+      - key: WOOCOMMERCE_URL
+        sync: false
+      - key: WOOCOMMERCE_KEY
+        sync: false
+      - key: WOOCOMMERCE_SECRET
+        sync: false
+
+      # --- Optional: AI keys (loaded from Supabase 'config' table if not set here) ---
+      # - key: LLM_PROVIDER
+      # - key: OPENAI_API_KEY
+      # - key: ANTHROPIC_API_KEY
+      # - key: GEMINI_API_KEY
+
+      # --- App config ---
+      - key: EMBEDDING_MODEL
+        value: BAAI/bge-small-en-v1.5
+      - key: PORT
+        value: "8000"
+    healthCheckPath: /webhook

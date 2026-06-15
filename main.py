@@ -51,8 +51,34 @@ MAX_INCOMING_TEXT_LEN = 1000
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifecycle events to verify configuration and warm up clients."""
+    """Lifecycle events: load secrets from Supabase, verify config, warm up clients."""
+    global agent  # noqa: PLW0603 – need to re-init after config load
+    
     logger.info("WhatsApp WooCommerce Bot is starting up...")
+    
+    # --- Load secrets from Supabase config table ---
+    try:
+        remote_config = await db.get_app_config()
+        if remote_config:
+            loaded_keys = []
+            for key, value in remote_config.items():
+                if value and not os.getenv(key):
+                    # Only set if not already overridden by a local env var
+                    os.environ[key] = value
+                    loaded_keys.append(key)
+            if loaded_keys:
+                logger.info(f"Loaded {len(loaded_keys)} config keys from Supabase: {', '.join(loaded_keys)}")
+            else:
+                logger.info("All config keys already set locally; Supabase config skipped.")
+        else:
+            logger.warning("No config rows found in Supabase 'config' table (or table doesn't exist).")
+    except Exception as e:
+        logger.warning(f"Could not load remote config from Supabase: {e}. Falling back to env vars.")
+    
+    # Re-initialize the RAG agent so it picks up the freshly-loaded keys
+    agent = RAGAgent()
+    
+    # --- Verify WhatsApp config ---
     verify_token = os.getenv("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
     phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
     access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
@@ -64,6 +90,9 @@ async def lifespan(app: FastAPI):
         
     if not db.client:
         logger.error("Supabase client not initialized. Database and carts will not function.")
+    
+    llm_provider = os.getenv("LLM_PROVIDER", "not set")
+    logger.info(f"LLM Provider: {llm_provider}")
         
     yield
     logger.info("WhatsApp WooCommerce Bot is shutting down...")

@@ -1,34 +1,43 @@
-# Use an official Python runtime as a parent image
-FROM python:3.10-slim
+# ---- Build Stage ----
+FROM python:3.12-slim AS builder
 
-# Set environment variables
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8000
+    PYTHONDONTWRITEBYTECODE=1
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies (needed for installing some packages)
+# Install build-time system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the requirements file into the container
 COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Pre-download the FastEmbed model so it's baked into the image
+RUN PYTHONPATH=/install/lib/python3.12/site-packages \
+    python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-en-v1.5')"
 
-# Pre-download the FastEmbed model to cache it inside the Docker image.
-# This prevents network timeouts and slow cold-starts in production.
-RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-en-v1.5')"
+# ---- Runtime Stage ----
+FROM python:3.12-slim
 
-# Copy the rest of the application code
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=8000
+
+WORKDIR /app
+
+# Copy installed packages from builder
+COPY --from=builder /install /usr/local
+# Copy cached embedding model from builder
+COPY --from=builder /root/.cache /root/.cache
+
+# Copy application code
 COPY . .
 
-# Expose the port the app runs on
 EXPOSE 8000
 
-# Run the FastAPI server using Uvicorn
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/webhook')" || exit 1
+
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
