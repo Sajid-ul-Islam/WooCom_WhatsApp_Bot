@@ -52,7 +52,7 @@ MAX_INCOMING_TEXT_LEN = 1000
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle events: load secrets from Supabase, verify config, warm up clients."""
-    global agent  # noqa: PLW0603 – need to re-init after config load
+    global wc, wa, agent  # noqa: PLW0603 – re-init after config load
     
     logger.info("WhatsApp WooCommerce Bot is starting up...")
     
@@ -75,24 +75,29 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Could not load remote config from Supabase: {e}. Falling back to env vars.")
     
-    # Re-initialize the RAG agent so it picks up the freshly-loaded keys
+    # Re-initialize ALL clients so they pick up the freshly-loaded keys
+    wc = WooCommerceClient()
+    wa = WhatsAppClient()
     agent = RAGAgent()
     
-    # --- Verify WhatsApp config ---
+    # --- Verify config ---
     verify_token = os.getenv("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
     phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
     access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
     
     if not verify_token or not phone_id or not access_token:
-        logger.error("WhatsApp credentials missing in environment variables. Webhook might fail.")
+        logger.error("WhatsApp credentials missing. Check Supabase 'config' table or env vars.")
     else:
         logger.info(f"WhatsApp Client configured for Phone ID: {phone_id}")
-        
-    if not db.client:
-        logger.error("Supabase client not initialized. Database and carts will not function.")
+    
+    wc_url = os.getenv("WOOCOMMERCE_URL", "not set")
+    logger.info(f"WooCommerce URL: {wc_url}")
     
     llm_provider = os.getenv("LLM_PROVIDER", "not set")
     logger.info(f"LLM Provider: {llm_provider}")
+    
+    if not db.client:
+        logger.error("Supabase client not initialized. Database and carts will not function.")
         
     yield
     logger.info("WhatsApp WooCommerce Bot is shutting down...")
