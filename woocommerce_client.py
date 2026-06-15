@@ -3,6 +3,8 @@ import logging
 import httpx
 from typing import List, Dict, Any, Optional
 
+from db import normalize_phone
+
 logger = logging.getLogger(__name__)
 
 class WooCommerceClient:
@@ -162,7 +164,8 @@ class WooCommerceClient:
     async def get_orders_by_phone(self, phone_number: str) -> List[Dict[str, Any]]:
         """Retrieve recent orders associated with a phone number."""
         url = f"{self.base_api_url}/orders"
-        # Try searching by phone number directly
+        pn_clean = normalize_phone(phone_number)
+        # Try searching by the raw phone number directly
         params = {
             "search": phone_number,
             "per_page": 10
@@ -173,14 +176,13 @@ class WooCommerceClient:
                 response.raise_for_status()
                 orders = response.json()
                 
-                # Double filter in memory to make sure phone matches billing
+                # Filter in memory: compare last 10 digits so country-code differences don't break matching
                 matched = []
                 for order in orders:
                     billing_phone = order.get("billing", {}).get("phone", "")
-                    # Strip any non-digit chars to compare
-                    bp_clean = "".join(filter(str.isdigit, billing_phone))
-                    pn_clean = "".join(filter(str.isdigit, phone_number))
-                    if pn_clean in bp_clean or bp_clean in pn_clean:
+                    bp_clean = normalize_phone(billing_phone)
+                    # Match if the trailing digits overlap (at least 10)
+                    if pn_clean[-10:] == bp_clean[-10:]:
                         matched.append(order)
                 return matched
             except Exception as e:

@@ -1,13 +1,16 @@
 import os
+import re
+import time
 import logging
 import json
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse, PlainTextResponse
 from dotenv import load_dotenv
 
 from woocommerce_client import WooCommerceClient
-from db import DatabaseClient
+from db import DatabaseClient, normalize_phone
 from whatsapp_client import WhatsAppClient
 from rag_agent import RAGAgent
 
@@ -22,6 +25,29 @@ wc = WooCommerceClient()
 db = DatabaseClient()
 wa = WhatsAppClient()
 agent = RAGAgent()
+
+# --- Simple In-Memory Rate Limiter ---
+
+RATE_LIMIT_WINDOW = 10  # seconds
+RATE_LIMIT_MAX = 5      # max messages per window
+
+_rate_buckets: dict[str, list[float]] = defaultdict(list)
+
+def _is_rate_limited(phone: str) -> bool:
+    """Return True if the phone number has exceeded the rate limit."""
+    now = time.monotonic()
+    bucket = _rate_buckets[phone]
+    # Prune old timestamps
+    _rate_buckets[phone] = [t for t in bucket if now - t < RATE_LIMIT_WINDOW]
+    bucket = _rate_buckets[phone]
+    if len(bucket) >= RATE_LIMIT_MAX:
+        return True
+    bucket.append(now)
+    return False
+
+# --- Max incoming message length ---
+MAX_INCOMING_TEXT_LEN = 1000
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -131,7 +157,6 @@ async def handle_product_detail(to: str, product_id: int):
     permalink = product.get("permalink", "")
     
     # Strip HTML from description
-    import re
     desc_raw = product.get("description") or product.get("short_description") or "No description available."
     description = re.sub('<[^<]+?>', '', desc_raw).strip()
     # Truncate description if too long
@@ -189,6 +214,12 @@ async def handle_add_to_cart(to: str, product_id: int, quantity: int = 1):
     ]
     await wa.send_reply_buttons(to, text, buttons)
 
+async def handle_remove_from_cart(to: str, product_id: int):
+    """Removes a product from the user's cart and shows updated cart."""
+    await db.remove_from_cart(to, product_id)
+    await wa.send_text_message(to, f"❌ Removed product #{product_id} from your cart.")
+    await handle_view_cart(to)
+
 async def handle_view_cart(to: str):
     """Displays the user's current shopping cart and actions."""
     cart_items = await db.get_cart(to)
@@ -218,40 +249,46 @@ async def handle_view_cart(to: str):
     await wa.send_reply_buttons(to, cart_text, buttons)
 
 async def handle_checkout_prompt(to: str):
-    """Instructs the user on how to complete their checkout."""
+    """Instructs the user on how to complete their checkout and sets state."""
     cart_items = await db.get_cart(to)
     if not cart_items:
         await wa.send_text_message(to, "Your cart is empty. Please add items before checking out.")
         return
-        
+    
+    # Transition user into checkout_pending state
+    await db.set_user_state(to, "checkout_pending")
+    
     instruction = (
         "💳 *Checkout Instructions*\n\n"
-        "To place your cash-on-delivery order, please reply in the following format:\n\n"
-        "*Checkout: [Your Full Name], [Your Shipping Address]*\n\n"
+        "Please reply with your name and shipping address in the following format:\n\n"
+        "*Your Full Name, Your Shipping Address*\n\n"
         "Example:\n"
-        "_Checkout: John Doe, 123 Main Street, New York_"
+        "_John Doe, 123 Main Street, New York_\n\n"
+        "Or type *cancel* to go back."
     )
     await wa.send_text_message(to, instruction)
 
 async def handle_process_checkout(to: str, text: str):
     """Processes the order creation in WooCommerce and clears user cart."""
-    # Pattern matching "Checkout: Name, Address"
+    # Parse: "Name, Address" (no prefix needed when coming from state machine)
     try:
-        details = text.split(":", 1)[1].strip()
-        parts = details.split(",", 1)
+        parts = text.split(",", 1)
         if len(parts) < 2:
             raise ValueError()
         name = parts[0].strip()
         address = parts[1].strip()
+        if not name or not address:
+            raise ValueError()
     except Exception:
         await wa.send_text_message(
             to, 
-            "⚠️ Invalid checkout format.\n\nPlease reply exactly like this:\n*Checkout: Name, Full Address*"
+            "⚠️ Invalid format.\n\nPlease reply like this:\n*Name, Full Address*\n\nOr type *cancel* to go back."
         )
         return
         
     cart_items = await db.get_cart(to)
     if not cart_items:
+        await db.set_user_state(to, "idle")
         await wa.send_text_message(to, "Your cart is empty. Browse products to start shopping!")
         return
         
@@ -263,6 +300,9 @@ async def handle_process_checkout(to: str, text: str):
         cart_items=cart_items,
         address_text=address
     )
+    
+    # Reset state regardless of outcome
+    await db.set_user_state(to, "idle")
     
     if not order:
         await wa.send_text_message(to, "❌ Failed to place order in our system. Please try again later.")
@@ -424,6 +464,11 @@ async def whatsapp_webhook(request: Request):
     
     msg_type = message.get("type")
     
+    # --- Rate Limiting ---
+    if _is_rate_limited(from_number):
+        logger.warning(f"Rate limited: {from_number}")
+        return JSONResponse({"status": "rate_limited"})
+    
     # Initialize variables for action routing
     action_id = ""
     incoming_text = ""
@@ -437,19 +482,35 @@ async def whatsapp_webhook(request: Request):
             action_id = interactive.get("button_reply", {}).get("id", "")
         elif int_type == "list_reply":
             action_id = interactive.get("list_reply", {}).get("id", "")
+        else:
+            logger.warning(f"Unknown interactive type '{int_type}' from {from_number}")
             
     elif msg_type == "text":
         incoming_text = message.get("text", {}).get("body", "").strip()
+        # Enforce message length cap
+        if len(incoming_text) > MAX_INCOMING_TEXT_LEN:
+            incoming_text = incoming_text[:MAX_INCOMING_TEXT_LEN]
+    else:
+        # Unsupported message types (image, audio, location, etc.)
+        logger.info(f"Unsupported message type '{msg_type}' from {from_number}")
+        return JSONResponse({"status": "unsupported_type"})
 
     # 2. Route payload
     try:
-        # HUMAN HANDOFF CHECK
-        await db.upsert_user(from_number)
+        # Upsert user on every message
+        contact_name = None
+        contacts = value.get("contacts", [])
+        if contacts:
+            profile = contacts[0].get("profile", {})
+            contact_name = profile.get("name")
+        await db.upsert_user(from_number, first_name=contact_name)
         
+        # --- Resume bot check (always runs even if paused) ---
         if incoming_text:
             text_lower = incoming_text.lower()
             if text_lower in ["/resume", "resume", "resume bot"]:
                 await db.set_bot_paused(from_number, False)
+                await db.set_user_state(from_number, "idle")
                 await wa.send_text_message(from_number, "✅ Bot resumed. How can I help you?")
                 return JSONResponse({"status": "ok"})
                 
@@ -457,6 +518,19 @@ async def whatsapp_webhook(request: Request):
         if is_paused:
             logger.info(f"Bot paused for {from_number}. Ignoring message.")
             return JSONResponse({"status": "ignored"})
+        
+        # --- State machine: check if we're waiting for checkout details ---
+        user_state = await db.get_user_state(from_number)
+        
+        if user_state == "checkout_pending" and incoming_text:
+            # User is replying with their checkout details
+            if incoming_text.lower() in ["cancel", "/cancel", "back"]:
+                await db.set_user_state(from_number, "idle")
+                await wa.send_text_message(from_number, "Checkout cancelled.")
+                await handle_main_menu(from_number)
+            else:
+                await handle_process_checkout(from_number, incoming_text)
+            return JSONResponse({"status": "ok"})
             
         if action_id:
             logger.info(f"Processing action '{action_id}' from {from_number}")
@@ -476,6 +550,11 @@ async def whatsapp_webhook(request: Request):
                 prod_id = int(action_id.split("_")[1])
                 await handle_add_to_cart(from_number, prod_id)
                 
+            # Remove product from cart (interactive button support)
+            elif action_id.startswith("rmv_"):
+                prod_id = int(action_id.split("_")[1])
+                await handle_remove_from_cart(from_number, prod_id)
+                
             # Menu buttons routing
             elif action_id == "menu_main":
                 await handle_main_menu(from_number)
@@ -494,7 +573,7 @@ async def whatsapp_webhook(request: Request):
                 await handle_main_menu(from_number)
                 
         elif incoming_text:
-            logger.info(f"Processing text message '{incoming_text}' from {from_number}")
+            logger.info(f"Processing text message from {from_number}")
             text_lower = incoming_text.lower()
             
             # Start/Hello
@@ -513,24 +592,19 @@ async def whatsapp_webhook(request: Request):
             elif text_lower in ["orders", "my order", "my orders", "status"]:
                 await handle_view_orders(from_number)
                 
-            # Add command by typing (fallback for manual add, e.g. "Add 123")
-            elif text_lower.startswith("add ") or text_lower.startswith("add"):
-                # extract ID
+            # Add command by typing (e.g. "Add 123")
+            elif re.match(r"^add\s+\d+", text_lower):
                 try:
-                    parts = text_lower.split()
-                    prod_id = int("".join(filter(str.isdigit, parts[-1])))
+                    prod_id = int(re.search(r"\d+", text_lower).group())
                     await handle_add_to_cart(from_number, prod_id)
                 except Exception:
                     await wa.send_text_message(from_number, "To add a product, please type *Add [Product ID]* (e.g. *Add 105*).")
                     
             # Remove command by typing (e.g. "Remove 123")
-            elif text_lower.startswith("remove ") or text_lower.startswith("remove"):
+            elif re.match(r"^remove\s+\d+", text_lower):
                 try:
-                    parts = text_lower.split()
-                    prod_id = int("".join(filter(str.isdigit, parts[-1])))
-                    await db.remove_from_cart(from_number, prod_id)
-                    await wa.send_text_message(from_number, f"❌ Removed product from cart.")
-                    await handle_view_cart(from_number)
+                    prod_id = int(re.search(r"\d+", text_lower).group())
+                    await handle_remove_from_cart(from_number, prod_id)
                 except Exception:
                     await wa.send_text_message(from_number, "To remove an item, type *Remove [Product ID]* (e.g. *Remove 105*).")
                     
@@ -539,9 +613,11 @@ async def whatsapp_webhook(request: Request):
                 await db.set_bot_paused(from_number, True)
                 await wa.send_text_message(from_number, "⏸️ I have paused my automated responses. A human agent will be with you shortly. Type */resume* when you want me to take over again.")
                 
-            # Process checkout command
-            elif text_lower.startswith("checkout:") or text_lower.startswith("checkout"):
-                await handle_process_checkout(from_number, incoming_text)
+            # Legacy checkout command (still supported)
+            elif text_lower.startswith("checkout:"):
+                # Strip "Checkout:" prefix and process
+                details_text = incoming_text.split(":", 1)[1].strip()
+                await handle_process_checkout(from_number, details_text)
                 
             # Treat everything else as AI search/QA query
             else:
