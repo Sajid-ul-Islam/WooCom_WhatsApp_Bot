@@ -1,5 +1,10 @@
+"""
+Standalone script to sync WooCommerce products to Supabase with vector embeddings.
+Processes products in small batches to avoid memory issues on low-RAM machines.
+"""
 import os
 import re
+import gc
 import asyncio
 import logging
 from dotenv import load_dotenv
@@ -36,7 +41,24 @@ def prepare_product_search_text(product: Dict[str, Any]) -> str:
 
     return f"Product Name: {name}. Price: ${price}. Categories: {categories_str}. Tags: {tags_str}. Description: {description}"
 
+def prepare_product_doc(p: Dict[str, Any]) -> Dict[str, Any]:
+    """Map a WooCommerce product to a Supabase row (without embedding)."""
+    images = [{"src": img.get("src")} for img in p.get("images", [])]
+    categories = [{"id": cat.get("id"), "name": cat.get("name")} for cat in p.get("categories", [])]
+    return {
+        "id": p.get("id"),
+        "name": p.get("name"),
+        "description": clean_html(p.get("description", "")),
+        "price": float(p.get("price")) if p.get("price") else 0.0,
+        "permalink": p.get("permalink"),
+        "images": images,
+        "categories": categories,
+    }
+
+
 class ProductEmbeddingManager:
+    BATCH_SIZE = 8  # Small batches to fit in low RAM
+
     def __init__(self):
         self.wc_client = WooCommerceClient()
         self.db_client = DatabaseClient()
@@ -46,14 +68,9 @@ class ProductEmbeddingManager:
         logger.info(f"Initializing FastEmbed with model: {model_name}")
         self.embedding_model = TextEmbedding(model_name=model_name)
 
-    def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """Generate vector embeddings for a list of texts using FastEmbed."""
-        logger.info(f"Generating embeddings for {len(texts)} texts...")
-        # text_embeddings is a generator of numpy arrays
-        embeddings_generator = self.embedding_model.embed(texts)
-        # Convert to list of lists (float)
-        embeddings = [arr.tolist() for arr in embeddings_generator]
-        return embeddings
+    def _embed_batch(self, texts: List[str]) -> List[List[float]]:
+        """Embed a small batch of texts and return list of float vectors."""
+        return [arr.tolist() for arr in self.embedding_model.embed(texts)]
 
     async def sync_products(self) -> bool:
         """Fetch all WooCommerce products, generate embeddings, and upsert to Supabase."""
@@ -67,49 +84,43 @@ class ProductEmbeddingManager:
             logger.warning("No products fetched from WooCommerce.")
             return False
             
-        logger.info(f"Fetched {len(products)} products from WooCommerce. Generating embeddings...")
+        total = len(products)
+        logger.info(f"Fetched {total} products from WooCommerce. Processing in batches of {self.BATCH_SIZE}...")
         
-        # Prepare texts for embeddings
-        texts = []
-        product_docs = []
-        
-        for p in products:
-            search_text = prepare_product_search_text(p)
-            texts.append(search_text)
-            
-            # Map WooCommerce properties to Supabase columns
-            images = [{"src": img.get("src")} for img in p.get("images", [])]
-            categories = [{"id": cat.get("id"), "name": cat.get("name")} for cat in p.get("categories", [])]
-            
-            doc = {
-                "id": p.get("id"),
-                "name": p.get("name"),
-                "description": clean_html(p.get("description", "")),
-                "price": float(p.get("price")) if p.get("price") else 0.0,
-                "permalink": p.get("permalink"),
-                "images": images,
-                "categories": categories,
-            }
-            product_docs.append(doc)
-            
-        # Bulk generate embeddings
-        try:
-            embeddings = self.generate_embeddings(texts)
-            for i, doc in enumerate(product_docs):
-                doc["embedding"] = embeddings[i]
-        except Exception as e:
-            logger.error(f"Error generating embeddings: {e}")
-            return False
-            
-        logger.info("Upserting products to Supabase...")
         success_count = 0
-        for doc in product_docs:
-            success = await self.db_client.upsert_product(doc)
-            if success:
-                success_count += 1
+        
+        for i in range(0, total, self.BATCH_SIZE):
+            batch_products = products[i:i + self.BATCH_SIZE]
+            batch_num = i // self.BATCH_SIZE + 1
+            total_batches = (total + self.BATCH_SIZE - 1) // self.BATCH_SIZE
+            logger.info(f"Batch {batch_num}/{total_batches} — embedding {len(batch_products)} products...")
+            
+            # Prepare texts and docs for this batch only
+            texts = [prepare_product_search_text(p) for p in batch_products]
+            docs = [prepare_product_doc(p) for p in batch_products]
+            
+            try:
+                embeddings = self._embed_batch(texts)
+                for j, doc in enumerate(docs):
+                    doc["embedding"] = embeddings[j]
+            except Exception as e:
+                logger.error(f"Error generating embeddings for batch {batch_num}: {e}")
+                # Skip this batch but continue with the rest
+                gc.collect()
+                continue
+            
+            # Upsert this batch to Supabase immediately
+            for doc in docs:
+                success = await self.db_client.upsert_product(doc)
+                if success:
+                    success_count += 1
+            
+            # Free memory
+            del texts, docs, embeddings, batch_products
+            gc.collect()
                 
-        logger.info(f"Successfully synced {success_count}/{len(product_docs)} products.")
-        return success_count == len(product_docs)
+        logger.info(f"✅ Successfully synced {success_count}/{total} products.")
+        return success_count == total
 
 # For running as a standalone script
 if __name__ == "__main__":

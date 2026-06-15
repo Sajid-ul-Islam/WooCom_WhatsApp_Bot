@@ -302,3 +302,18 @@ class DatabaseClient:
         except Exception as e:
             logger.error(f"Error fetching app config from Supabase: {e}")
             return {}
+
+    # ==================== PRODUCT SYNC ====================
+
+    async def upsert_product(self, doc: dict) -> bool:
+        """Upsert a single product document (with embedding) into the 'products' table."""
+        if not self.client:
+            return False
+        try:
+            await self._run_sync(
+                lambda: self.client.table("products").upsert(doc).execute()
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error upserting product {doc.get('id')}: {e}")
+            return False
