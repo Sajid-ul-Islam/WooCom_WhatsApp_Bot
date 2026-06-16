@@ -258,6 +258,14 @@
         </div>
     </div>
 
+    <div class="card" style="margin-bottom: 2rem;">
+        <div class="table-header">Broadcast Center 📢</div>
+        <p class="text-muted" style="margin-bottom: 1rem; font-size: 0.875rem;">Send a promotional message to all active users (capped at 50 for safety).</p>
+        <textarea id="broadcast-msg" rows="4" placeholder="Enter your promotional message here..." style="width: 100%; padding: 1rem; background: rgba(0,0,0,0.2); border: 1px solid var(--card-border); border-radius: 8px; color: var(--text-primary); margin-bottom: 1rem; font-family: inherit; resize: vertical;"></textarea>
+        <button onclick="sendBroadcast()" style="background: var(--accent-solid); color: #fff; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; font-weight: 600; cursor: pointer; transition: background 0.2s;">Send Broadcast</button>
+        <span id="broadcast-status" style="margin-left: 1rem; font-size: 0.875rem; color: var(--success);"></span>
+    </div>
+
     <div class="tables-grid">
         <!-- Recent Users Table -->
         <div class="card">
@@ -381,6 +389,38 @@
                 console.error('Failed to fetch dashboard stats', err);
             } finally {
                 loader.style.display = 'none';
+            }
+        };
+
+        const sendBroadcast = async () => {
+            const msg = document.getElementById('broadcast-msg').value;
+            const status = document.getElementById('broadcast-status');
+            if (!msg.trim()) {
+                status.innerText = "Please enter a message.";
+                status.style.color = "var(--warning)";
+                return;
+            }
+            status.innerText = "Sending broadcast...";
+            status.style.color = "var(--text-secondary)";
+            
+            try {
+                const res = await fetch('/api/broadcast', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ message: msg })
+                });
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    status.innerText = "✅ " + data.message;
+                    status.style.color = "var(--success)";
+                    document.getElementById('broadcast-msg').value = '';
+                } else {
+                    status.innerText = "❌ " + data.message;
+                    status.style.color = "var(--warning)";
+                }
+            } catch (e) {
+                status.innerText = "❌ Error sending broadcast.";
+                status.style.color = "var(--warning)";
             }
         };
 

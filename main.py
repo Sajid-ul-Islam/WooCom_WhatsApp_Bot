@@ -3,6 +3,8 @@ import re
 import time
 import logging
 import json
+import asyncio
+from pydantic import BaseModel
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Depends
@@ -99,6 +101,30 @@ async def lifespan(app: FastAPI):
     if not db.client:
         logger.error("Supabase client not initialized. Database and carts will not function.")
         
+    # --- Start Abandoned Cart Worker ---
+    async def abandoned_cart_worker():
+        while True:
+            try:
+                # Run every 1 hour (3600 seconds)
+                await asyncio.sleep(3600)
+                abandoned = await db.get_abandoned_carts(hours=24)
+                for cart in abandoned:
+                    phone = cart.get("phone_number")
+                    if phone:
+                        msg = (
+                            "🛒 *Friendly Reminder!*\n\n"
+                            "You left some items in your shopping cart. "
+                            "Would you like to complete your order?\n\n"
+                            "Reply with *Cart* to view your items, or browse more to add others!"
+                        )
+                        await wa.send_text_message(phone, msg)
+                        await asyncio.sleep(1) # Prevent rate limiting
+            except Exception as e:
+                logger.error(f"Abandoned cart worker error: {e}")
+
+    # Fire and forget the background task
+    asyncio.create_task(abandoned_cart_worker())
+    
     yield
     logger.info("WhatsApp WooCommerce Bot is shutting down...")
 
@@ -124,6 +150,30 @@ async def dashboard():
         return HTMLResponse(content=html_content)
     except FileNotFoundError:
         return HTMLResponse(content="<h1>Dashboard UI not found. Please create public/dashboard.html</h1>", status_code=404)
+
+class BroadcastRequest(BaseModel):
+    message: str
+
+@app.post("/api/broadcast")
+async def broadcast_message(req: BroadcastRequest):
+    """Sends a promotional message to all active users."""
+    users = await db.get_all_active_users()
+    if not users:
+        return JSONResponse({"status": "error", "message": "No users found."})
+        
+    # Safety cap: limit to 50 for testing/preventing bans
+    users = users[:50]
+    
+    count = 0
+    for phone in users:
+        try:
+            await wa.send_text_message(phone, req.message)
+            count += 1
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.error(f"Broadcast failed for {phone}: {e}")
+            
+    return JSONResponse({"status": "ok", "message": f"Broadcast sent to {count} users."})
 
 # --- Routing Logic for Chatbot ---
 
@@ -731,4 +781,50 @@ async def woo_webhook(request: Request):
         return JSONResponse({"status": "ok"})
     except Exception as e:
         logger.error(f"Error processing woo webhook: {e}")
+        return JSONResponse({"status": "error"})
+
+@app.post("/woo-product-webhook")
+async def woo_product_webhook(request: Request):
+    """Webhook to receive new/updated products from WooCommerce and embed them in real-time."""
+    try:
+        product = await request.json()
+        logger.info(f"Received WooCommerce product webhook for ID: {product.get('id')}")
+        
+        if not product.get("id") or not product.get("name"):
+            return JSONResponse({"status": "ignored", "reason": "Missing product ID or name"})
+            
+        prod_id = product.get("id")
+        name = product.get("name")
+        description = product.get("description", "") or product.get("short_description", "")
+        description = re.sub('<[^<]+?>', '', description).strip()
+        
+        price = product.get("price") or product.get("regular_price") or "0"
+        permalink = product.get("permalink", "")
+        images = product.get("images", [])
+        categories = product.get("categories", [])
+        
+        doc = {
+            "id": prod_id,
+            "name": name,
+            "description": description,
+            "price": float(price) if price else 0.0,
+            "permalink": permalink,
+            "images": images,
+            "categories": categories
+        }
+        
+        text_to_embed = f"{name} {description} {' '.join([c.get('name', '') for c in categories])}"
+        embedding = agent._generate_query_embedding(text_to_embed)
+        if embedding:
+            doc["embedding"] = embedding
+            
+        success = await db.upsert_product(doc)
+        if success:
+            logger.info(f"Successfully vectorized and saved product {prod_id} to AI memory.")
+        else:
+            logger.error(f"Failed to save product {prod_id} to DB.")
+            
+        return JSONResponse({"status": "ok"})
+    except Exception as e:
+        logger.error(f"Error processing product webhook: {e}", exc_info=True)
         return JSONResponse({"status": "error"})

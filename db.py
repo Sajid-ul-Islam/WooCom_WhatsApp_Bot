@@ -303,6 +303,46 @@ class DatabaseClient:
             logger.error(f"Error fetching app config from Supabase: {e}")
             return {}
 
+    async def get_abandoned_carts(self, hours: int = 24) -> list:
+        """Fetch carts that have been inactive for exactly 'hours' to 'hours+1' to prevent spam."""
+        if not self.client: return []
+        try:
+            res = await self._run_sync(
+                lambda: self.client.table("carts").select("*").execute()
+            )
+            if not res.data: return []
+            
+            from datetime import datetime, timezone, timedelta
+            now = datetime.now(timezone.utc)
+            abandoned = []
+            
+            for c in res.data:
+                try:
+                    updated = datetime.fromisoformat(c["updated_at"].replace('Z', '+00:00'))
+                    diff = now - updated
+                    if timedelta(hours=hours) <= diff < timedelta(hours=hours+1):
+                        items = c.get("items", [])
+                        if items and len(items) > 0 and isinstance(items, list):
+                            abandoned.append(c)
+                except Exception:
+                    pass
+            return abandoned
+        except Exception as e:
+            logger.error(f"Error fetching abandoned carts: {e}")
+            return []
+
+    async def get_all_active_users(self) -> list:
+        """Fetch all WhatsApp users."""
+        if not self.client: return []
+        try:
+            res = await self._run_sync(
+                lambda: self.client.table("whatsapp_users").select("phone_number").limit(1000).execute()
+            )
+            return [u["phone_number"] for u in (res.data or [])]
+        except Exception as e:
+            logger.error(f"Error fetching active users: {e}")
+            return []
+
     # ==================== DASHBOARD STATS ====================
 
     async def get_dashboard_stats(self) -> dict:
