@@ -28,16 +28,16 @@ class RAGAgent:
         self.anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
 
         self.groq_key = os.getenv("GROQ_API_KEY")
-        self.groq_model = os.getenv("GROQ_MODEL", "llama3-8b-8192")
+        self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
         self.grok_key = os.getenv("GROK_API_KEY")
-        self.grok_model = os.getenv("GROK_MODEL", "grok-beta")
+        self.grok_model = os.getenv("GROK_MODEL", "grok-2-latest")
 
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
-        self.openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3-8b-instruct:free")
+        self.openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3-8b-instruct")
 
         self.gemini_key = os.getenv("GEMINI_API_KEY")
-        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash-latest")
 
     def _generate_query_embedding(self, query: str) -> List[float]:
         """Generate vector embedding for user query."""
