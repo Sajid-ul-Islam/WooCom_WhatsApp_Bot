@@ -128,19 +128,33 @@ async def dashboard():
 # --- Routing Logic for Chatbot ---
 
 async def handle_main_menu(to: str):
-    """Sends the main menu options using reply buttons."""
+    """Sends the main menu options using a List Message (supports up to 10 options)."""
     text = (
         "Assalamu Alaikum! 👋\n\n"
         "Welcome to our WooCommerce Store! How can I help you today?\n\n"
-        "Please select an option below, ask me a question about our products, "
+        "Please select an option from the menu below, ask me a question about our products, "
         "or search for items directly."
     )
-    buttons = [
-        {"id": "menu_categories", "title": "Browse Categories"},
-        {"id": "menu_cart", "title": "View Cart"},
-        {"id": "menu_orders", "title": "My Orders"}
-    ]
-    await wa.send_reply_buttons(to, text, buttons)
+    
+    # Using a list message because WhatsApp limits normal buttons to exactly 3!
+    sections = [{
+        "title": "Main Menu Options",
+        "rows": [
+            {"id": "menu_categories", "title": "🛍️ Browse Categories", "description": "Explore our store's catalog"},
+            {"id": "menu_cart", "title": "🛒 View Cart", "description": "Check your selected items"},
+            {"id": "menu_orders", "title": "📦 My Orders", "description": "Track your past purchases"},
+            {"id": "cart_clear", "title": "🗑️ Clear Cart", "description": "Empty your shopping cart"},
+            {"id": "menu_human", "title": "🧑‍💻 Talk to Human", "description": "Pause the AI and talk to staff"}
+        ]
+    }]
+    
+    await wa.send_list_message(
+        to=to,
+        button_text="Tap for Options",
+        body_text=text,
+        sections=sections,
+        header_text="Main Menu"
+    )
 
 async def handle_categories(to: str):
     """Sends product categories to the user as a List Message."""
@@ -619,6 +633,9 @@ async def whatsapp_webhook(request: Request):
                 await handle_view_cart(from_number)
             elif action_id == "menu_orders":
                 await handle_view_orders(from_number)
+            elif action_id == "menu_human":
+                await db.set_bot_paused(from_number, True)
+                await wa.send_text_message(from_number, "⏸️ I have paused my automated responses. A human agent will be with you shortly. Type */resume* when you want me to take over again.")
             elif action_id == "cart_checkout":
                 await handle_checkout_prompt(from_number)
             elif action_id == "cart_clear":
