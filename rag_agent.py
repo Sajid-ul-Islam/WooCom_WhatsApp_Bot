@@ -20,28 +20,24 @@ class RAGAgent:
             self.embedding_model = None
 
         # Load LLM configs
-        self.provider = os.getenv("LLM_PROVIDER", "openai").lower()
+        self.provider = os.getenv("LLM_PROVIDER", "").lower()
         self.openai_key = os.getenv("OPENAI_API_KEY")
         self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         
         self.anthropic_key = os.getenv("ANTHROPIC_API_KEY")
         self.anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
-        
-        # Initialize LLM Clients lazily
-        self._openai_client = None
-        self._anthropic_client = None
 
-    def _get_openai_client(self):
-        if not self._openai_client and self.openai_key:
-            from openai import AsyncOpenAI
-            self._openai_client = AsyncOpenAI(api_key=self.openai_key)
-        return self._openai_client
+        self.groq_key = os.getenv("GROQ_API_KEY")
+        self.groq_model = os.getenv("GROQ_MODEL", "llama3-8b-8192")
 
-    def _get_anthropic_client(self):
-        if not self._anthropic_client and self.anthropic_key:
-            from anthropic import AsyncAnthropic
-            self._anthropic_client = AsyncAnthropic(api_key=self.anthropic_key)
-        return self._anthropic_client
+        self.grok_key = os.getenv("GROK_API_KEY")
+        self.grok_model = os.getenv("GROK_MODEL", "grok-beta")
+
+        self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
+        self.openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3-8b-instruct:free")
+
+        self.gemini_key = os.getenv("GEMINI_API_KEY")
+        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
     def _generate_query_embedding(self, query: str) -> List[float]:
         """Generate vector embedding for user query."""
@@ -61,46 +57,27 @@ class RAGAgent:
         if self.provider:
             providers_to_try.append(self.provider)
             
-        if "openai" not in providers_to_try and self.openai_key:
-            providers_to_try.append("openai")
-        if "anthropic" not in providers_to_try and self.anthropic_key:
-            providers_to_try.append("anthropic")
+        # Add available fallbacks in priority order
+        if "openrouter" not in providers_to_try and self.openrouter_key: providers_to_try.append("openrouter")
+        if "groq" not in providers_to_try and self.groq_key: providers_to_try.append("groq")
+        if "grok" not in providers_to_try and self.grok_key: providers_to_try.append("grok")
+        if "gemini" not in providers_to_try and self.gemini_key: providers_to_try.append("gemini")
+        if "openai" not in providers_to_try and self.openai_key: providers_to_try.append("openai")
+        if "anthropic" not in providers_to_try and self.anthropic_key: providers_to_try.append("anthropic")
             
         if not providers_to_try:
-            return "Error: No LLM API keys configured. Please add OPENAI_API_KEY or ANTHROPIC_API_KEY to your Supabase config table."
+            return "Error: No LLM API keys configured. Please add an API key to your Supabase config table."
             
         errors = []
         
         for provider in providers_to_try:
-            if provider == "openai":
-                client = self._get_openai_client()
-                if not client:
-                    errors.append("OpenAI client not initialized.")
+            if provider == "anthropic":
+                if not self.anthropic_key:
+                    errors.append("Anthropic key missing.")
                     continue
                 try:
-                    messages = [{"role": "system", "content": system_prompt}]
-                    if history:
-                        messages.extend(history)
-                    messages.append({"role": "user", "content": user_prompt})
-                    
-                    response = await client.chat.completions.create(
-                        model=self.openai_model,
-                        messages=messages,
-                        max_tokens=600,
-                        temperature=0.3
-                    )
-                    return response.choices[0].message.content or ""
-                except Exception as e:
-                    errors.append(f"OpenAI: {str(e)}")
-                    logger.warning(f"OpenAI API failed, falling back if available: {e}")
-                    continue
-                    
-            elif provider == "anthropic":
-                client = self._get_anthropic_client()
-                if not client:
-                    errors.append("Anthropic client not initialized.")
-                    continue
-                try:
+                    from anthropic import AsyncAnthropic
+                    client = AsyncAnthropic(api_key=self.anthropic_key)
                     messages_list = []
                     if history:
                         messages_list.extend(history)
@@ -116,7 +93,61 @@ class RAGAgent:
                     return response.content[0].text
                 except Exception as e:
                     errors.append(f"Anthropic: {str(e)}")
-                    logger.warning(f"Anthropic API failed, falling back if available: {e}")
+                    logger.warning(f"Anthropic API failed, falling back: {e}")
+                    continue
+            else:
+                # All other providers are OpenAI compatible!
+                base_url = None
+                api_key = None
+                model = None
+                
+                if provider == "openai":
+                    api_key = self.openai_key
+                    model = self.openai_model
+                elif provider == "groq":
+                    api_key = self.groq_key
+                    model = self.groq_model
+                    base_url = "https://api.groq.com/openai/v1"
+                elif provider == "grok":
+                    api_key = self.grok_key
+                    model = self.grok_model
+                    base_url = "https://api.x.ai/v1"
+                elif provider == "openrouter":
+                    api_key = self.openrouter_key
+                    model = self.openrouter_model
+                    base_url = "https://openrouter.ai/api/v1"
+                elif provider == "gemini":
+                    api_key = self.gemini_key
+                    model = self.gemini_model
+                    base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+                
+                if not api_key:
+                    errors.append(f"{provider.capitalize()} key missing.")
+                    continue
+                    
+                try:
+                    from openai import AsyncOpenAI
+                    client_kwargs = {"api_key": api_key}
+                    if base_url:
+                        client_kwargs["base_url"] = base_url
+                    
+                    client = AsyncOpenAI(**client_kwargs)
+                    
+                    messages = [{"role": "system", "content": system_prompt}]
+                    if history:
+                        messages.extend(history)
+                    messages.append({"role": "user", "content": user_prompt})
+                    
+                    response = await client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        max_tokens=600,
+                        temperature=0.3
+                    )
+                    return response.choices[0].message.content or ""
+                except Exception as e:
+                    errors.append(f"{provider.capitalize()}: {str(e)}")
+                    logger.warning(f"{provider.capitalize()} API failed, falling back: {e}")
                     continue
 
         error_msg = " | ".join(errors)
