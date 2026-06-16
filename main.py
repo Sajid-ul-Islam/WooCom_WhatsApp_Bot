@@ -6,7 +6,7 @@ import json
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Depends
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from dotenv import load_dotenv
 
 from woocommerce_client import WooCommerceClient
@@ -108,6 +108,22 @@ app = FastAPI(lifespan=lifespan)
 async def health_check():
     """Root health check — confirms the app is running."""
     return {"status": "ok", "service": "WooCom WhatsApp Bot"}
+
+@app.get("/api/dashboard-stats")
+async def api_dashboard_stats():
+    """Returns real-time dashboard statistics from Supabase."""
+    stats = await db.get_dashboard_stats()
+    return JSONResponse(content=stats)
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard():
+    """Serves the dashboard HTML interface."""
+    try:
+        with open("public/dashboard.html", "r", encoding="utf-8") as f:
+            html_content = f.read()
+        return HTMLResponse(content=html_content)
+    except FileNotFoundError:
+        return HTMLResponse(content="<h1>Dashboard UI not found. Please create public/dashboard.html</h1>", status_code=404)
 
 # --- Routing Logic for Chatbot ---
 

@@ -303,6 +303,51 @@ class DatabaseClient:
             logger.error(f"Error fetching app config from Supabase: {e}")
             return {}
 
+    # ==================== DASHBOARD STATS ====================
+
+    async def get_dashboard_stats(self) -> dict:
+        """Fetch aggregated stats for the dashboard."""
+        if not self.client:
+            return {"users": [], "orders": [], "carts_count": 0, "users_count": 0}
+            
+        stats = {
+            "users": [],
+            "orders": [],
+            "carts_count": 0,
+            "users_count": 0
+        }
+        
+        try:
+            # Get users
+            users_res = await self._run_sync(
+                lambda: self.client.table("whatsapp_users").select("phone_number, first_name, state, bot_paused, last_active").order("last_active", desc=True).limit(10).execute()
+            )
+            stats["users"] = users_res.data or []
+            
+            # Total users
+            users_count_res = await self._run_sync(
+                lambda: self.client.table("whatsapp_users").select("phone_number", count="exact").execute()
+            )
+            stats["users_count"] = users_count_res.count or 0
+            
+            # Get recent orders
+            orders_res = await self._run_sync(
+                lambda: self.client.table("orders").select("id, phone_number, status, total, created_at").order("created_at", desc=True).limit(5).execute()
+            )
+            stats["orders"] = orders_res.data or []
+            
+            # Active carts count
+            carts_res = await self._run_sync(
+                lambda: self.client.table("carts").select("items").execute()
+            )
+            if carts_res.data:
+                stats["carts_count"] = sum(1 for c in carts_res.data if c.get("items"))
+                
+        except Exception as e:
+            logger.error(f"Error fetching dashboard stats: {e}")
+            
+        return stats
+
     # ==================== PRODUCT SYNC ====================
 
     async def upsert_product(self, doc: dict) -> bool:

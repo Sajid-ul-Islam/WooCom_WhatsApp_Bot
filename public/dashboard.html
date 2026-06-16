@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WooCom WhatsApp Bot Admin Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: rgba(255, 255, 255, 0.03);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --text-primary: #ffffff;
+            --text-secondary: #94a3b8;
+            --accent-glow: rgba(56, 189, 248, 0.15);
+            --accent-solid: #38bdf8;
+            --success: #10b981;
+            --warning: #f59e0b;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 2rem;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        /* Animated Background Gradients */
+        .bg-glow-1 {
+            position: absolute;
+            top: -10%;
+            left: -10%;
+            width: 50vw;
+            height: 50vw;
+            background: radial-gradient(circle, rgba(139,92,246,0.15) 0%, rgba(0,0,0,0) 70%);
+            border-radius: 50%;
+            z-index: -1;
+            animation: pulse 10s infinite alternate;
+        }
+
+        .bg-glow-2 {
+            position: absolute;
+            bottom: -10%;
+            right: -10%;
+            width: 60vw;
+            height: 60vw;
+            background: radial-gradient(circle, rgba(56,189,248,0.1) 0%, rgba(0,0,0,0) 70%);
+            border-radius: 50%;
+            z-index: -1;
+            animation: pulse 8s infinite alternate-reverse;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 0.8; }
+            100% { transform: scale(1.2); opacity: 1; }
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-weight: 700;
+            font-size: 2rem;
+            background: linear-gradient(to right, #fff, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            background: var(--card-bg);
+            padding: 0.5rem 1rem;
+            border-radius: 999px;
+            border: 1px solid var(--card-border);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--success);
+            box-shadow: 0 0 10px var(--success);
+        }
+
+        /* Glassmorphism Cards */
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 40px rgba(0, 0, 0, 0.2);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .stat-title {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        /* Tables Grid */
+        .tables-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .table-header {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+
+        th {
+            text-align: left;
+            padding: 1rem;
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        td {
+            padding: 1rem;
+            font-size: 0.875rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+            color: var(--text-primary);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr {
+            transition: background-color 0.2s ease;
+        }
+
+        tr:hover td {
+            background-color: rgba(255, 255, 255, 0.02);
+        }
+
+        .badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            display: inline-block;
+        }
+
+        .badge-success { background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.2); }
+        .badge-warning { background: rgba(245, 158, 11, 0.1); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.2); }
+        .badge-info { background: rgba(56, 189, 248, 0.1); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.2); }
+
+        .loader {
+            border: 2px solid var(--card-border);
+            border-top: 2px solid var(--accent-solid);
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-left: 10px;
+            display: none;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .text-muted {
+            color: var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-glow-1"></div>
+    <div class="bg-glow-2"></div>
+
+    <header>
+        <div>
+            <h1>Admin Dashboard</h1>
+            <p class="text-muted">Real-time WhatsApp Bot Metrics</p>
+        </div>
+        <div class="status-indicator">
+            <div class="status-dot"></div>
+            Live Monitoring <div class="loader" id="loader"></div>
+        </div>
+    </header>
+
+    <div class="stats-grid">
+        <div class="card stat-card">
+            <div class="stat-title">Total Users</div>
+            <div class="stat-value" id="val-users-count">-</div>
+        </div>
+        <div class="card stat-card">
+            <div class="stat-title">Active Shopping Carts</div>
+            <div class="stat-value" id="val-carts-count">-</div>
+        </div>
+    </div>
+
+    <div class="tables-grid">
+        <!-- Recent Users Table -->
+        <div class="card">
+            <div class="table-header">
+                Recent Users
+            </div>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Phone Number</th>
+                            <th>Name</th>
+                            <th>State</th>
+                            <th>Bot Status</th>
+                            <th>Last Active</th>
+                        </tr>
+                    </thead>
+                    <tbody id="users-tbody">
+                        <tr><td colspan="5" class="text-muted text-center">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Recent Orders Table -->
+        <div class="card">
+            <div class="table-header">
+                Recent Orders
+            </div>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Order ID</th>
+                            <th>Phone Number</th>
+                            <th>Status</th>
+                            <th>Total</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orders-tbody">
+                        <tr><td colspan="5" class="text-muted text-center">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const formatTimeAgo = (dateString) => {
+            if (!dateString) return 'N/A';
+            const date = new Date(dateString);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            
+            if (diffMins < 1) return 'Just now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+            const diffHrs = Math.floor(diffMins / 60);
+            if (diffHrs < 24) return `${diffHrs}h ago`;
+            return `${Math.floor(diffHrs / 24)}d ago`;
+        };
+
+        const fetchStats = async () => {
+            const loader = document.getElementById('loader');
+            loader.style.display = 'inline-block';
+            try {
+                const response = await fetch('/api/dashboard-stats');
+                const data = await response.json();
+                
+                // Update Overview Stats
+                document.getElementById('val-users-count').innerText = data.users_count || 0;
+                document.getElementById('val-carts-count').innerText = data.carts_count || 0;
+
+                // Render Users Table
+                const usersTbody = document.getElementById('users-tbody');
+                if (data.users && data.users.length > 0) {
+                    usersTbody.innerHTML = data.users.map(u => {
+                        const botBadge = u.bot_paused 
+                            ? '<span class="badge badge-warning">Paused</span>' 
+                            : '<span class="badge badge-success">Active</span>';
+                        const stateBadge = `<span class="badge badge-info">${u.state || 'idle'}</span>`;
+                        
+                        return `
+                            <tr>
+                                <td>${u.phone_number}</td>
+                                <td>${u.first_name || 'Customer'}</td>
+                                <td>${stateBadge}</td>
+                                <td>${botBadge}</td>
+                                <td>${formatTimeAgo(u.last_active)}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                } else {
+                    usersTbody.innerHTML = '<tr><td colspan="5" class="text-muted">No recent users found.</td></tr>';
+                }
+
+                // Render Orders Table
+                const ordersTbody = document.getElementById('orders-tbody');
+                if (data.orders && data.orders.length > 0) {
+                    ordersTbody.innerHTML = data.orders.map(o => {
+                        let statusClass = 'badge-info';
+                        if (o.status === 'completed' || o.status === 'processing') statusClass = 'badge-success';
+                        if (o.status === 'cancelled' || o.status === 'failed') statusClass = 'badge-warning';
+                        
+                        return `
+                            <tr>
+                                <td>#${o.id}</td>
+                                <td>${o.phone_number}</td>
+                                <td><span class="badge ${statusClass}">${o.status}</span></td>
+                                <td>$${parseFloat(o.total).toFixed(2)}</td>
+                                <td>${formatTimeAgo(o.created_at)}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                } else {
+                    ordersTbody.innerHTML = '<tr><td colspan="5" class="text-muted">No recent orders found.</td></tr>';
+                }
+
+            } catch (err) {
+                console.error('Failed to fetch dashboard stats', err);
+            } finally {
+                loader.style.display = 'none';
+            }
+        };
+
+        // Initial fetch
+        fetchStats();
+
+        // Refresh every 5 seconds
+        setInterval(fetchStats, 5000);
+    </script>
+</body>
+</html>
