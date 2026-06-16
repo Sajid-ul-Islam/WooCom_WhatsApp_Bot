@@ -635,7 +635,13 @@ async def whatsapp_webhook(request: Request):
                 await handle_view_orders(from_number)
             elif action_id == "menu_human":
                 await db.set_bot_paused(from_number, True)
-                await wa.send_text_message(from_number, "⏸️ I have paused my automated responses. A human agent will be with you shortly. Type */resume* when you want me to take over again.")
+                agent_phone = os.getenv("HUMAN_AGENT_PHONE", "1234567890")
+                msg = (
+                    "⏸️ I have paused my automated responses.\n\n"
+                    f"Please click this link to chat directly with our human agent on WhatsApp:\n👉 https://wa.me/{agent_phone}\n\n"
+                    "Type */resume* when you want me to take over again."
+                )
+                await wa.send_text_message(from_number, msg)
             elif action_id == "cart_checkout":
                 await handle_checkout_prompt(from_number)
             elif action_id == "cart_clear":
