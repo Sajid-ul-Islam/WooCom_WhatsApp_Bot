@@ -69,12 +69,13 @@ class RAGAgent:
         if not providers_to_try:
             return "Error: No LLM API keys configured. Please add OPENAI_API_KEY or ANTHROPIC_API_KEY to your Supabase config table."
             
-        last_error = ""
+        errors = []
         
         for provider in providers_to_try:
             if provider == "openai":
                 client = self._get_openai_client()
                 if not client:
+                    errors.append("OpenAI client not initialized.")
                     continue
                 try:
                     messages = [{"role": "system", "content": system_prompt}]
@@ -90,13 +91,14 @@ class RAGAgent:
                     )
                     return response.choices[0].message.content or ""
                 except Exception as e:
-                    last_error = str(e)
+                    errors.append(f"OpenAI: {str(e)}")
                     logger.warning(f"OpenAI API failed, falling back if available: {e}")
                     continue
                     
             elif provider == "anthropic":
                 client = self._get_anthropic_client()
                 if not client:
+                    errors.append("Anthropic client not initialized.")
                     continue
                 try:
                     messages_list = []
@@ -113,11 +115,12 @@ class RAGAgent:
                     )
                     return response.content[0].text
                 except Exception as e:
-                    last_error = str(e)
+                    errors.append(f"Anthropic: {str(e)}")
                     logger.warning(f"Anthropic API failed, falling back if available: {e}")
                     continue
 
-        return f"Sorry, I encountered an error communicating with the AI providers. Last error: {last_error}"
+        error_msg = " | ".join(errors)
+        return f"Sorry, all AI providers failed. Errors: {error_msg}"
 
     async def answer_query(self, query: str, history: list = None) -> Dict[str, Any]:
         """
