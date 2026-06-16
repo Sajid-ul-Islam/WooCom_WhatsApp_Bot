@@ -1,5 +1,6 @@
 import os
 import logging
+import json
 from typing import List, Dict, Any, Optional
 from fastembed import TextEmbedding
 
@@ -153,24 +154,119 @@ class RAGAgent:
         error_msg = " | ".join(errors)
         return f"Sorry, all AI providers failed. Errors: {error_msg}"
 
+    async def _analyze_query(self, query: str) -> dict:
+        """
+        Uses the LLM to classify intent and extract search parameters.
+        Returns a dict: { "intent": str, "search_terms": str, "max_price": float|None, "min_price": float|None }
+        """
+        system_prompt = (
+            "You are a strict JSON query analyzer for an e-commerce store. "
+            "Analyze the user's message and output a RAW JSON object. DO NOT wrap the JSON in Markdown formatting (no ```json). Just output raw JSON.\n\n"
+            "Format:\n"
+            "{\n"
+            '  "intent": "product_search" | "small_talk" | "support" | "order_status",\n'
+            '  "search_terms": "Cleaned string focusing only on product features/names (e.g. \'red running shoes\'). Leave empty if not product_search",\n'
+            '  "max_price": numeric or null,\n'
+            '  "min_price": numeric or null\n'
+            "}\n\n"
+            "Rules:\n"
+            "- If the user says 'hi', 'hello', 'thanks', intent = 'small_talk'.\n"
+            "- If the user says 'where is my order', intent = 'order_status'.\n"
+            "- If the user says 'i need help with a return', intent = 'support'.\n"
+            "- If the user is asking to buy, browse, or find items, intent = 'product_search'.\n"
+            "- Extract max_price/min_price ONLY if explicitly mentioned (e.g. 'under 50' -> max_price: 50.0)."
+        )
+        try:
+            response_text = await self._call_llm(system_prompt, f"User Query: {query}")
+            
+            clean_text = response_text.strip()
+            if clean_text.startswith("```json"):
+                clean_text = clean_text[7:]
+            if clean_text.startswith("```"):
+                clean_text = clean_text[3:]
+            if clean_text.endswith("```"):
+                clean_text = clean_text[:-3]
+                
+            data = json.loads(clean_text.strip())
+            
+            return {
+                "intent": data.get("intent", "product_search"),
+                "search_terms": data.get("search_terms", query),
+                "max_price": data.get("max_price"),
+                "min_price": data.get("min_price")
+            }
+        except Exception as e:
+            logger.error(f"Error analyzing query: {e}. Falling back to default product search.")
+            return {
+                "intent": "product_search",
+                "search_terms": query,
+                "max_price": None,
+                "min_price": None
+            }
+
     async def answer_query(self, query: str, history: list = None) -> Dict[str, Any]:
         """
-        Processes user query: finds similar products and builds a conversational response.
-        Returns a dict: {"text": "Formatted text response", "products": list_of_matching_products}
+        Processes user query dynamically.
         """
-        logger.info(f"Processing query: '{query}'")
+        logger.info(f"Processing query dynamically: '{query}'")
         
-        # 1. Embed query
-        query_embedding = self._generate_query_embedding(query)
+        # 1. Analyze query
+        analysis = await self._analyze_query(query)
+        intent = analysis["intent"]
+        search_terms = analysis["search_terms"] or query
+        max_price = analysis["max_price"]
+        min_price = analysis["min_price"]
         
-        # 2. Vector search matching products
+        logger.info(f"Query Analysis: {analysis}")
+        
         matching_products = []
-        if query_embedding:
-            matching_products = await self.db_client.match_products(query_embedding, threshold=0.4, limit=4)
+        
+        # 2. Route based on intent
+        if intent in ["small_talk", "support", "order_status"]:
+            system_prompt = (
+                "You are an expert, friendly sales assistant for our online store.\n"
+                "CRITICAL: Automatically detect the language the user is speaking and reply fluently in that EXACT same language!\n"
+                "You MUST format your replies for WhatsApp. Keep them concise and clear.\n\n"
+            )
+            if intent == "order_status":
+                system_prompt += "The user is asking about an order. Tell them they can check their order status by clicking the 'My Orders' button in the main menu."
+            elif intent == "support":
+                system_prompt += "The user needs support. Tell them they can talk to a human by clicking the 'Talk to Human' button in the main menu."
+            elif intent == "small_talk":
+                system_prompt += "The user is making small talk. Be polite, friendly, and ask how you can help them find the perfect product today."
+                
+            response_text = await self._call_llm(system_prompt, query, history)
+            return {
+                "text": response_text,
+                "products": []
+            }
             
-        logger.info(f"Found {len(matching_products)} matching products.")
+        # 3. Product Search Intent
+        query_embedding = self._generate_query_embedding(search_terms)
+        context_warning = ""
+        
+        if query_embedding:
+            # Fetch up to 20 for Python-side filtering
+            raw_matches = await self.db_client.match_products(query_embedding, threshold=0.3, limit=20)
+            
+            # 4. Hybrid Filtering
+            filtered_matches = []
+            for p in raw_matches:
+                price = float(p.get("price") or 0)
+                if max_price is not None and price > max_price:
+                    continue
+                if min_price is not None and price < min_price:
+                    continue
+                filtered_matches.append(p)
+                
+            # If our filters killed all results, fall back to raw matches to at least show something
+            if not filtered_matches and raw_matches:
+                matching_products = raw_matches[:4]
+                context_warning = f"Note: I could not find exact matches within the budget constraint ({min_price}-{max_price}), but here are the closest alternatives."
+            else:
+                matching_products = filtered_matches[:4]
 
-        # 3. Construct System Prompt
+        # 5. Construct Product Prompt
         system_prompt = (
             "You are an expert sales assistant for our online store. "
             "Your job is to answer user queries politely and helpfully. "
@@ -188,9 +284,11 @@ class RAGAgent:
             "4. Keep responses under 3 short paragraphs. WhatsApp users prefer quick answers.\n"
             "5. To add a product to the cart, the user will reply with: *Add [ID]* (e.g. *Add 123*)."
         )
-
-        # 4. Construct Context
+        
         context_str = "Available Products in Store:\n"
+        if context_warning:
+            context_str += f"[{context_warning}]\n\n"
+            
         if matching_products:
             for p in matching_products:
                 desc = p.get("description", "")[:120] + "..." if len(p.get("description", "")) > 120 else p.get("description", "")
@@ -200,7 +298,6 @@ class RAGAgent:
 
         user_prompt = f"Context:\n{context_str}\n\nUser Query: {query}\n\nProvide your sales assistant response:"
 
-        # 5. Call LLM
         response_text = await self._call_llm(system_prompt, user_prompt, history)
         
         return {
