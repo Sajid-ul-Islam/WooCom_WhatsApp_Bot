@@ -56,53 +56,68 @@ class RAGAgent:
             return []
 
     async def _call_llm(self, system_prompt: str, user_prompt: str, history: list = None) -> str:
-        """Call the configured LLM API (OpenAI or Anthropic)."""
-        if self.provider == "openai":
-            client = self._get_openai_client()
-            if not client:
-                return "Error: OpenAI client not initialized. Check API keys."
+        """Call the configured LLM APIs with dynamic fallback."""
+        providers_to_try = []
+        if self.provider:
+            providers_to_try.append(self.provider)
             
-            messages = [{"role": "system", "content": system_prompt}]
-            if history:
-                messages.extend(history)
-            messages.append({"role": "user", "content": user_prompt})
+        if "openai" not in providers_to_try and self.openai_key:
+            providers_to_try.append("openai")
+        if "anthropic" not in providers_to_try and self.anthropic_key:
+            providers_to_try.append("anthropic")
             
-            try:
-                response = await client.chat.completions.create(
-                    model=self.openai_model,
-                    messages=messages,
-                    max_tokens=600,
-                    temperature=0.3
-                )
-                return response.choices[0].message.content or ""
-            except Exception as e:
-                logger.error(f"OpenAI API error: {e}")
-                return "Sorry, I encountered an error communicating with OpenAI."
-                
-        elif self.provider == "anthropic":
-            client = self._get_anthropic_client()
-            if not client:
-                return "Error: Anthropic client not initialized. Check API keys."
-            try:
-                messages_list = []
-                if history:
-                    messages_list.extend(history)
-                messages_list.append({"role": "user", "content": user_prompt})
+        if not providers_to_try:
+            return "Error: No LLM API keys configured. Please add OPENAI_API_KEY or ANTHROPIC_API_KEY to your Supabase config table."
+            
+        last_error = ""
+        
+        for provider in providers_to_try:
+            if provider == "openai":
+                client = self._get_openai_client()
+                if not client:
+                    continue
+                try:
+                    messages = [{"role": "system", "content": system_prompt}]
+                    if history:
+                        messages.extend(history)
+                    messages.append({"role": "user", "content": user_prompt})
+                    
+                    response = await client.chat.completions.create(
+                        model=self.openai_model,
+                        messages=messages,
+                        max_tokens=600,
+                        temperature=0.3
+                    )
+                    return response.choices[0].message.content or ""
+                except Exception as e:
+                    last_error = str(e)
+                    logger.warning(f"OpenAI API failed, falling back if available: {e}")
+                    continue
+                    
+            elif provider == "anthropic":
+                client = self._get_anthropic_client()
+                if not client:
+                    continue
+                try:
+                    messages_list = []
+                    if history:
+                        messages_list.extend(history)
+                    messages_list.append({"role": "user", "content": user_prompt})
 
-                response = await client.messages.create(
-                    model=self.anthropic_model,
-                    max_tokens=600,
-                    temperature=0.3,
-                    system=system_prompt,
-                    messages=messages_list
-                )
-                return response.content[0].text
-            except Exception as e:
-                logger.error(f"Anthropic API error: {e}")
-                return "Sorry, I encountered an error communicating with Anthropic."
-                
-        else:
-            return f"Error: Unsupported LLM Provider '{self.provider}'"
+                    response = await client.messages.create(
+                        model=self.anthropic_model,
+                        max_tokens=600,
+                        temperature=0.3,
+                        system=system_prompt,
+                        messages=messages_list
+                    )
+                    return response.content[0].text
+                except Exception as e:
+                    last_error = str(e)
+                    logger.warning(f"Anthropic API failed, falling back if available: {e}")
+                    continue
+
+        return f"Sorry, I encountered an error communicating with the AI providers. Last error: {last_error}"
 
     async def answer_query(self, query: str, history: list = None) -> Dict[str, Any]:
         """
