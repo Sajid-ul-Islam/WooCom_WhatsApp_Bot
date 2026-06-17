@@ -1,17 +1,68 @@
 import os
+import asyncio
 import logging
 import json
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from fastembed import TextEmbedding
 
 from db import DatabaseClient
 
 logger = logging.getLogger(__name__)
 
+
+# --- Provider Registry ---
+# Each entry maps a provider name to its env-var keys, default model, and base URL.
+# Providers using the "anthropic" api_type get special handling; all others are
+# assumed to be OpenAI-compatible and can share a single code path.
+
+PROVIDER_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "openai": {
+        "key_env": "OPENAI_API_KEY",
+        "model_env": "OPENAI_MODEL",
+        "default_model": "gpt-4o-mini",
+        "base_url": None,
+    },
+    "anthropic": {
+        "key_env": "ANTHROPIC_API_KEY",
+        "model_env": "ANTHROPIC_MODEL",
+        "default_model": "claude-3-5-sonnet-20241022",
+        "base_url": None,
+        "api_type": "anthropic",
+    },
+    "groq": {
+        "key_env": "GROQ_API_KEY",
+        "model_env": "GROQ_MODEL",
+        "default_model": "llama-3.3-70b-versatile",
+        "base_url": "https://api.groq.com/openai/v1",
+    },
+    "grok": {
+        "key_env": "GROK_API_KEY",
+        "model_env": "GROK_MODEL",
+        "default_model": "grok-2-latest",
+        "base_url": "https://api.x.ai/v1",
+    },
+    "openrouter": {
+        "key_env": "OPENROUTER_API_KEY",
+        "model_env": "OPENROUTER_MODEL",
+        "default_model": "meta-llama/llama-3-8b-instruct",
+        "base_url": "https://openrouter.ai/api/v1",
+    },
+    "gemini": {
+        "key_env": "GEMINI_API_KEY",
+        "model_env": "GEMINI_MODEL",
+        "default_model": "gemini-1.5-flash-latest",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+    },
+}
+
+# Fallback order when the primary provider fails or isn't set.
+FALLBACK_PRIORITY = ["openrouter", "groq", "grok", "gemini", "openai", "anthropic"]
+
+
 class RAGAgent:
-    def __init__(self):
-        self.db_client = DatabaseClient()
-        
+    def __init__(self, db_client=None):
+        self.db_client = db_client or DatabaseClient()
+
         # Load embedding model
         model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
         try:
@@ -20,25 +71,18 @@ class RAGAgent:
             logger.error(f"Error loading embedding model: {e}")
             self.embedding_model = None
 
-        # Load LLM configs
+        # Load LLM provider configs from the registry
         self.provider = os.getenv("LLM_PROVIDER", "").lower()
-        self.openai_key = os.getenv("OPENAI_API_KEY")
-        self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        
-        self.anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-        self.anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
-
-        self.groq_key = os.getenv("GROQ_API_KEY")
-        self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-
-        self.grok_key = os.getenv("GROK_API_KEY")
-        self.grok_model = os.getenv("GROK_MODEL", "grok-2-latest")
-
-        self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
-        self.openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3-8b-instruct")
-
-        self.gemini_key = os.getenv("GEMINI_API_KEY")
-        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash-latest")
+        self.providers: Dict[str, Dict[str, Any]] = {}
+        for name, reg in PROVIDER_REGISTRY.items():
+            key = os.getenv(reg["key_env"])
+            if key:
+                self.providers[name] = {
+                    "key": key,
+                    "model": os.getenv(reg["model_env"], reg["default_model"]),
+                    "base_url": reg.get("base_url"),
+                    "api_type": reg.get("api_type", "openai"),
+                }
 
     def _generate_query_embedding(self, query: str) -> List[float]:
         """Generate vector embedding for user query."""
@@ -54,105 +98,88 @@ class RAGAgent:
 
     async def _call_llm(self, system_prompt: str, user_prompt: str, history: list = None) -> str:
         """Call the configured LLM APIs with dynamic fallback."""
-        providers_to_try = []
-        if self.provider:
+        # Build ordered list of providers to try: primary first, then fallbacks.
+        providers_to_try: list[str] = []
+        if self.provider and self.provider in self.providers:
             providers_to_try.append(self.provider)
-            
-        # Add available fallbacks in priority order
-        if "openrouter" not in providers_to_try and self.openrouter_key: providers_to_try.append("openrouter")
-        if "groq" not in providers_to_try and self.groq_key: providers_to_try.append("groq")
-        if "grok" not in providers_to_try and self.grok_key: providers_to_try.append("grok")
-        if "gemini" not in providers_to_try and self.gemini_key: providers_to_try.append("gemini")
-        if "openai" not in providers_to_try and self.openai_key: providers_to_try.append("openai")
-        if "anthropic" not in providers_to_try and self.anthropic_key: providers_to_try.append("anthropic")
-            
+
+        for name in FALLBACK_PRIORITY:
+            if name not in providers_to_try and name in self.providers:
+                providers_to_try.append(name)
+
         if not providers_to_try:
             return "Error: No LLM API keys configured. Please add an API key to your Supabase config table."
-            
-        errors = []
-        
-        for provider in providers_to_try:
-            if provider == "anthropic":
-                if not self.anthropic_key:
-                    errors.append("Anthropic key missing.")
-                    continue
-                try:
-                    from anthropic import AsyncAnthropic
-                    client = AsyncAnthropic(api_key=self.anthropic_key)
-                    messages_list = []
-                    if history:
-                        messages_list.extend(history)
-                    messages_list.append({"role": "user", "content": user_prompt})
 
-                    response = await client.messages.create(
-                        model=self.anthropic_model,
-                        max_tokens=600,
-                        temperature=0.3,
-                        system=system_prompt,
-                        messages=messages_list
-                    )
-                    return response.content[0].text
-                except Exception as e:
-                    errors.append(f"Anthropic: {str(e)}")
-                    logger.warning(f"Anthropic API failed, falling back: {e}")
-                    continue
-            else:
-                # All other providers are OpenAI compatible!
-                base_url = None
-                api_key = None
-                model = None
-                
-                if provider == "openai":
-                    api_key = self.openai_key
-                    model = self.openai_model
-                elif provider == "groq":
-                    api_key = self.groq_key
-                    model = self.groq_model
-                    base_url = "https://api.groq.com/openai/v1"
-                elif provider == "grok":
-                    api_key = self.grok_key
-                    model = self.grok_model
-                    base_url = "https://api.x.ai/v1"
-                elif provider == "openrouter":
-                    api_key = self.openrouter_key
-                    model = self.openrouter_model
-                    base_url = "https://openrouter.ai/api/v1"
-                elif provider == "gemini":
-                    api_key = self.gemini_key
-                    model = self.gemini_model
-                    base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-                
-                if not api_key:
-                    errors.append(f"{provider.capitalize()} key missing.")
-                    continue
-                    
+        MAX_RETRIES = 3
+        BASE_DELAY = 1.0  # seconds
+
+        errors: list[str] = []
+
+        for provider_name in providers_to_try:
+            config = self.providers[provider_name]
+            api_key = config["key"]
+            model = config["model"]
+            base_url = config.get("base_url")
+
+            for attempt in range(MAX_RETRIES):
                 try:
-                    from openai import AsyncOpenAI
-                    client_kwargs = {"api_key": api_key}
-                    if base_url:
-                        client_kwargs["base_url"] = base_url
-                    
-                    client = AsyncOpenAI(**client_kwargs)
-                    
-                    messages = [{"role": "system", "content": system_prompt}]
-                    if history:
-                        messages.extend(history)
-                    messages.append({"role": "user", "content": user_prompt})
-                    
-                    response = await client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        max_tokens=600,
-                        temperature=0.3
-                    )
-                    return response.choices[0].message.content or ""
+                    if config.get("api_type") == "anthropic":
+                        return await self._call_anthropic(api_key, model, system_prompt, user_prompt, history)
+                    else:
+                        return await self._call_openai_compatible(api_key, model, base_url, system_prompt, user_prompt, history)
                 except Exception as e:
-                    errors.append(f"{provider.capitalize()}: {str(e)}")
-                    logger.warning(f"{provider.capitalize()} API failed, falling back: {e}")
-                    continue
+                    delay = BASE_DELAY * (2 ** attempt)
+                    logger.warning(
+                        f"{provider_name} attempt {attempt + 1}/{MAX_RETRIES} failed: {e}"
+                        + (f" — retrying in {delay:.1f}s" if attempt < MAX_RETRIES - 1 else "")
+                    )
+                    if attempt < MAX_RETRIES - 1:
+                        await asyncio.sleep(delay)
+                    else:
+                        errors.append(f"{provider_name}: {e}")
 
         error_msg = " | ".join(errors)
         return f"Sorry, all AI providers failed. Errors: {error_msg}"
+
+    async def _call_anthropic(self, api_key: str, model: str, system_prompt: str, user_prompt: str, history: list = None) -> str:
+        """Call the Anthropic Messages API."""
+        from anthropic import AsyncAnthropic
+
+        client = AsyncAnthropic(api_key=api_key)
+        messages_list = list(history) if history else []
+        messages_list.append({"role": "user", "content": user_prompt})
+
+        response = await client.messages.create(
+            model=model,
+            max_tokens=600,
+            temperature=0.3,
+            system=system_prompt,
+            messages=messages_list,
+        )
+        return response.content[0].text
+
+    async def _call_openai_compatible(self, api_key: str, model: str, base_url: str | None, system_prompt: str, user_prompt: str, history: list = None) -> str:
+        """Call any OpenAI-compatible chat completions endpoint."""
+        from openai import AsyncOpenAI
+
+        client_kwargs: dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+
+        client = AsyncOpenAI(**client_kwargs)
+
+        messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": user_prompt})
+
+        response = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=600,
+            temperature=0.3,
+        )
+        return response.choices[0].message.content or ""
 
     async def _analyze_query(self, query: str) -> dict:
         """
@@ -178,7 +205,7 @@ class RAGAgent:
         )
         try:
             response_text = await self._call_llm(system_prompt, f"User Query: {query}")
-            
+
             clean_text = response_text.strip()
             if clean_text.startswith("```json"):
                 clean_text = clean_text[7:]
@@ -186,9 +213,9 @@ class RAGAgent:
                 clean_text = clean_text[3:]
             if clean_text.endswith("```"):
                 clean_text = clean_text[:-3]
-                
+
             data = json.loads(clean_text.strip())
-            
+
             return {
                 "intent": data.get("intent", "product_search"),
                 "search_terms": data.get("search_terms", query),
@@ -209,18 +236,18 @@ class RAGAgent:
         Processes user query dynamically.
         """
         logger.info(f"Processing query dynamically: '{query}'")
-        
+
         # 1. Analyze query
         analysis = await self._analyze_query(query)
         intent = analysis["intent"]
         search_terms = analysis["search_terms"] or query
         max_price = analysis["max_price"]
         min_price = analysis["min_price"]
-        
+
         logger.info(f"Query Analysis: {analysis}")
-        
+
         matching_products = []
-        
+
         # 2. Route based on intent
         if intent in ["small_talk", "support", "order_status"]:
             system_prompt = (
@@ -234,21 +261,21 @@ class RAGAgent:
                 system_prompt += "The user needs support. Tell them they can talk to a human by clicking the 'Talk to Human' button in the main menu."
             elif intent == "small_talk":
                 system_prompt += "The user is making small talk. Be polite, friendly, and ask how you can help them find the perfect product today."
-                
+
             response_text = await self._call_llm(system_prompt, query, history)
             return {
                 "text": response_text,
                 "products": []
             }
-            
+
         # 3. Product Search Intent
         query_embedding = self._generate_query_embedding(search_terms)
         context_warning = ""
-        
+
         if query_embedding:
             # Fetch up to 20 for Python-side filtering
             raw_matches = await self.db_client.match_products(query_embedding, threshold=0.3, limit=20)
-            
+
             # 4. Hybrid Filtering
             filtered_matches = []
             for p in raw_matches:
@@ -258,7 +285,7 @@ class RAGAgent:
                 if min_price is not None and price < min_price:
                     continue
                 filtered_matches.append(p)
-                
+
             # If our filters killed all results, fall back to raw matches to at least show something
             if not filtered_matches and raw_matches:
                 matching_products = raw_matches[:4]
@@ -284,11 +311,11 @@ class RAGAgent:
             "4. Keep responses under 3 short paragraphs. WhatsApp users prefer quick answers.\n"
             "5. To add a product to the cart, the user will reply with: *Add [ID]* (e.g. *Add 123*)."
         )
-        
+
         context_str = "Available Products in Store:\n"
         if context_warning:
             context_str += f"[{context_warning}]\n\n"
-            
+
         if matching_products:
             for p in matching_products:
                 desc = p.get("description", "")[:120] + "..." if len(p.get("description", "")) > 120 else p.get("description", "")
@@ -299,7 +326,7 @@ class RAGAgent:
         user_prompt = f"Context:\n{context_str}\n\nUser Query: {query}\n\nProvide your sales assistant response:"
 
         response_text = await self._call_llm(system_prompt, user_prompt, history)
-        
+
         return {
             "text": response_text,
             "products": matching_products

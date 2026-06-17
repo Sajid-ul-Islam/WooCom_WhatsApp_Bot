@@ -3,7 +3,6 @@ Standalone script to sync WooCommerce products to Supabase with vector embedding
 Processes products in small batches to avoid memory issues on low-RAM machines.
 """
 import os
-import re
 import gc
 import asyncio
 import logging
@@ -13,19 +12,13 @@ from fastembed import TextEmbedding
 
 from woocommerce_client import WooCommerceClient
 from db import DatabaseClient
+from utils import clean_html
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("product_embeddings")
 
 # Load environment variables in case this is run as a standalone script
 load_dotenv()
-
-def clean_html(raw_html: str) -> str:
-    """Strip HTML tags from WooCommerce descriptions."""
-    if not raw_html:
-        return ""
-    clean_r = re.compile('<[^<]+?>')
-    return re.sub(clean_r, '', raw_html).strip()
 
 def prepare_product_search_text(product: Dict[str, Any]) -> str:
     """Create a descriptive text representation of a product for semantic search."""

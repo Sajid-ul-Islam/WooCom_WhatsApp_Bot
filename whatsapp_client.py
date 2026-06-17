@@ -5,38 +5,43 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+
 class WhatsAppClient:
     def __init__(self):
         self.phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
         self.token = os.getenv("WHATSAPP_ACCESS_TOKEN")
-        
+
         if not self.phone_id or not self.token:
             logger.warning("WhatsApp Phone Number ID or Access Token not set in environment variables.")
-            
+
         self.base_url = f"https://graph.facebook.com/v20.0/{self.phone_id}/messages"
         self.headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"
         }
+        self._client = httpx.AsyncClient(timeout=30.0)
+
+    async def close(self):
+        """Close the underlying HTTP client."""
+        await self._client.aclose()
 
     async def _post_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Helper to send POST request to WhatsApp Cloud API."""
         if not self.phone_id or not self.token:
             logger.error("Cannot send message: WhatsApp configuration is missing.")
             return {"error": "Missing configuration"}
-            
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                response = await client.post(self.base_url, json=payload, headers=self.headers)
-                response_data = response.json()
-                if response.status_code != 200:
-                    logger.error(f"WhatsApp API Error status {response.status_code}: {response_data}")
-                else:
-                    logger.info(f"WhatsApp message sent successfully: {response_data.get('messages', [{}])[0].get('id')}")
-                return response_data
-            except Exception as e:
-                logger.error(f"Failed to post message to WhatsApp Cloud API: {e}")
-                return {"error": str(e)}
+
+        try:
+            response = await self._client.post(self.base_url, json=payload, headers=self.headers)
+            response_data = response.json()
+            if response.status_code != 200:
+                logger.error(f"WhatsApp API Error status {response.status_code}: {response_data}")
+            else:
+                logger.info(f"WhatsApp message sent successfully: {response_data.get('messages', [{}])[0].get('id')}")
+            return response_data
+        except Exception as e:
+            logger.error(f"Failed to post message to WhatsApp Cloud API: {e}")
+            return {"error": str(e)}
 
     async def send_text_message(self, to: str, text: str) -> Dict[str, Any]:
         """Send a standard text message."""
@@ -59,7 +64,7 @@ class WhatsAppClient:
         """
         if not buttons:
             return await self.send_text_message(to, text)
-            
+
         # Format buttons for Meta payload
         formatted_buttons = []
         for btn in buttons[:3]:  # WhatsApp limit is max 3 buttons
@@ -101,12 +106,12 @@ class WhatsAppClient:
         return await self._post_request(payload)
 
     async def send_list_message(
-        self, 
-        to: str, 
-        button_text: str, 
-        body_text: str, 
-        sections: List[Dict[str, Any]], 
-        header_text: Optional[str] = None, 
+        self,
+        to: str,
+        button_text: str,
+        body_text: str,
+        sections: List[Dict[str, Any]],
+        header_text: Optional[str] = None,
         footer_text: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -125,11 +130,11 @@ class WhatsAppClient:
         # Truncate and clean section rows to fit limits
         clean_sections = []
         total_rows = 0
-        
+
         for sec in sections:
             if total_rows >= 10:
                 break
-                
+
             sec_rows = []
             for row in sec.get("rows", []):
                 if total_rows >= 10:
@@ -140,7 +145,7 @@ class WhatsAppClient:
                     "description": row.get("description", "")[:72]  # Description limit is 72 characters
                 })
                 total_rows += 1
-                
+
             if sec_rows:
                 clean_sections.append({
                     "title": sec.get("title", "Select")[:24],  # Section title limit is 24 characters
@@ -189,5 +194,5 @@ class WhatsAppClient:
             }
         }
         if caption:
-            payload["image"]["caption"] = caption[:1024] # Caption limit is 1024 characters
+            payload["image"]["caption"] = caption[:1024]  # Caption limit is 1024 characters
         return await self._post_request(payload)

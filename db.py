@@ -1,19 +1,13 @@
 import os
-import re
 import asyncio
 import logging
 from datetime import datetime, timezone
 import json
 from supabase import create_client, Client
 
+from utils import normalize_phone
+
 logger = logging.getLogger(__name__)
-
-
-def normalize_phone(phone: str) -> str:
-    """Strip everything except digits from a phone number for consistent matching."""
-    if not phone:
-        return ""
-    return re.sub(r"\D", "", phone)
 
 
 class DatabaseClient:
