@@ -7,7 +7,7 @@ import asyncio
 from pydantic import BaseModel
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from dotenv import load_dotenv
 
@@ -45,6 +45,28 @@ def _is_rate_limited(phone: str) -> bool:
     if len(bucket) >= RATE_LIMIT_MAX:
         return True
     bucket.append(now)
+    return False
+
+# --- Simple In-Memory Message Deduplication ---
+# Maps message_id -> timestamp (when it was received)
+_processed_message_ids: dict[str, float] = {}
+DEDUPLICATION_WINDOW = 300  # 5 minutes in seconds
+
+def _is_duplicate_message(msg_id: str) -> bool:
+    """Check if the message has already been processed or is currently processing."""
+    if not msg_id:
+        return False
+    now = time.monotonic()
+    
+    # Prune old message IDs to prevent memory growth
+    expired_ids = [k for k, t in _processed_message_ids.items() if now - t > DEDUPLICATION_WINDOW]
+    for k in expired_ids:
+        _processed_message_ids.pop(k, None)
+        
+    if msg_id in _processed_message_ids:
+        return True
+        
+    _processed_message_ids[msg_id] = now
     return False
 
 # --- Max incoming message length ---
@@ -557,64 +579,8 @@ async def verify_webhook(request: Request):
             
     raise HTTPException(status_code=400, detail="Missing verification parameters")
 
-@app.post("/webhook")
-async def whatsapp_webhook(request: Request):
-    """Meta webhook POST receiver endpoint."""
-    try:
-        body = await request.json()
-    except Exception as e:
-        logger.error(f"Failed to parse incoming JSON: {e}")
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
-
-    # Log incoming webhook JSON for debugging
-    logger.debug(f"Webhook received: {json.dumps(body)}")
-
-    # Check for statuses update (sent, delivered, read) to ignore
-    entry = body.get("entry", [{}])[0]
-    changes = entry.get("changes", [{}])[0]
-    value = changes.get("value", {})
-    
-    if "messages" not in value:
-        # Status update or metadata update, return 200 OK
-        return JSONResponse({"status": "ignored"})
-        
-    message = value["messages"][0]
-    from_number = message["from"]
-    
-    msg_type = message.get("type")
-    
-    # --- Rate Limiting ---
-    if _is_rate_limited(from_number):
-        logger.warning(f"Rate limited: {from_number}")
-        return JSONResponse({"status": "rate_limited"})
-    
-    # Initialize variables for action routing
-    action_id = ""
-    incoming_text = ""
-    
-    # 1. Parse message type
-    if msg_type == "interactive":
-        interactive = message.get("interactive", {})
-        int_type = interactive.get("type")
-        
-        if int_type == "button_reply":
-            action_id = interactive.get("button_reply", {}).get("id", "")
-        elif int_type == "list_reply":
-            action_id = interactive.get("list_reply", {}).get("id", "")
-        else:
-            logger.warning(f"Unknown interactive type '{int_type}' from {from_number}")
-            
-    elif msg_type == "text":
-        incoming_text = message.get("text", {}).get("body", "").strip()
-        # Enforce message length cap
-        if len(incoming_text) > MAX_INCOMING_TEXT_LEN:
-            incoming_text = incoming_text[:MAX_INCOMING_TEXT_LEN]
-    else:
-        # Unsupported message types (image, audio, location, etc.)
-        logger.info(f"Unsupported message type '{msg_type}' from {from_number}")
-        return JSONResponse({"status": "unsupported_type"})
-
-    # 2. Route payload
+async def process_incoming_message(from_number: str, message: dict, value: dict, action_id: str, incoming_text: str):
+    """Processes WhatsApp message in the background to avoid blocking response to Meta."""
     try:
         # Upsert user on every message
         contact_name = None
@@ -631,12 +597,12 @@ async def whatsapp_webhook(request: Request):
                 await db.set_bot_paused(from_number, False)
                 await db.set_user_state(from_number, "idle")
                 await wa.send_text_message(from_number, "✅ Bot resumed. How can I help you?")
-                return JSONResponse({"status": "ok"})
+                return
                 
         is_paused = await db.is_bot_paused(from_number)
         if is_paused:
             logger.info(f"Bot paused for {from_number}. Ignoring message.")
-            return JSONResponse({"status": "ignored"})
+            return
         
         # --- State machine: check if we're waiting for checkout details ---
         user_state = await db.get_user_state(from_number)
@@ -649,7 +615,7 @@ async def whatsapp_webhook(request: Request):
                 await handle_main_menu(from_number)
             else:
                 await handle_process_checkout(from_number, incoming_text)
-            return JSONResponse({"status": "ok"})
+            return
             
         if action_id:
             logger.info(f"Processing action '{action_id}' from {from_number}")
@@ -759,6 +725,78 @@ async def whatsapp_webhook(request: Request):
             await handle_main_menu(from_number)
         except Exception:
             pass
+
+@app.post("/webhook")
+async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Meta webhook POST receiver endpoint."""
+    try:
+        body = await request.json()
+    except Exception as e:
+        logger.error(f"Failed to parse incoming JSON: {e}")
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    # Log incoming webhook JSON for debugging
+    logger.debug(f"Webhook received: {json.dumps(body)}")
+
+    # Check for statuses update (sent, delivered, read) to ignore
+    entry = body.get("entry", [{}])[0]
+    changes = entry.get("changes", [{}])[0]
+    value = changes.get("value", {})
+    
+    if "messages" not in value:
+        # Status update or metadata update, return 200 OK
+        return JSONResponse({"status": "ignored"})
+        
+    message = value["messages"][0]
+    from_number = message["from"]
+    
+    msg_id = message.get("id")
+    if msg_id and _is_duplicate_message(msg_id):
+        logger.info(f"Duplicate message detected: {msg_id}. Ignoring.")
+        return JSONResponse({"status": "ignored", "reason": "duplicate"})
+        
+    msg_type = message.get("type")
+    
+    # --- Rate Limiting ---
+    if _is_rate_limited(from_number):
+        logger.warning(f"Rate limited: {from_number}")
+        return JSONResponse({"status": "rate_limited"})
+    
+    # Initialize variables for action routing
+    action_id = ""
+    incoming_text = ""
+    
+    # 1. Parse message type
+    if msg_type == "interactive":
+        interactive = message.get("interactive", {})
+        int_type = interactive.get("type")
+        
+        if int_type == "button_reply":
+            action_id = interactive.get("button_reply", {}).get("id", "")
+        elif int_type == "list_reply":
+            action_id = interactive.get("list_reply", {}).get("id", "")
+        else:
+            logger.warning(f"Unknown interactive type '{int_type}' from {from_number}")
+            
+    elif msg_type == "text":
+        incoming_text = message.get("text", {}).get("body", "").strip()
+        # Enforce message length cap
+        if len(incoming_text) > MAX_INCOMING_TEXT_LEN:
+            incoming_text = incoming_text[:MAX_INCOMING_TEXT_LEN]
+    else:
+        # Unsupported message types (image, audio, location, etc.)
+        logger.info(f"Unsupported message type '{msg_type}' from {from_number}")
+        return JSONResponse({"status": "unsupported_type"})
+
+    # Schedule message processing in the background to respond 200 OK immediately to Meta
+    background_tasks.add_task(
+        process_incoming_message,
+        from_number=from_number,
+        message=message,
+        value=value,
+        action_id=action_id,
+        incoming_text=incoming_text
+    )
 
     return JSONResponse({"status": "ok"})
 
