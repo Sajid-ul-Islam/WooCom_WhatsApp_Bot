@@ -85,18 +85,20 @@ async def lifespan(app: FastAPI):
             try:
                 # Run every 1 hour (3600 seconds)
                 await asyncio.sleep(3600)
-                abandoned = await db.get_abandoned_carts(hours=24)
-                for cart in abandoned:
-                    phone = cart.get("phone_number")
-                    if phone:
-                        msg = (
-                            "🛒 *Friendly Reminder!*\n\n"
-                            "You left some items in your shopping cart. "
-                            "Would you like to complete your order?\n\n"
-                            "Reply with *Cart* to view your items, or browse more to add others!"
-                        )
-                        await ctx.wa.send_text_message(phone, msg)
-                        await asyncio.sleep(1)  # Prevent rate limiting
+                
+                cohorts = [
+                    (1, "🛒 *You left items in your cart!*\n\nComplete your order today to enjoy fast delivery. Reply with *Cart* to view your items!"),
+                    (24, "🛒 *Friendly Reminder!*\n\nYour cart is still waiting for you. Would you like to complete your order?\n\nReply with *Cart* to view your items, or browse more to add others!"),
+                    (72, "🛒 *Last Chance!*\n\nWe are holding your items for a little longer. Complete your purchase now before they sell out!\n\nReply with *Cart* to view your items and check out.")
+                ]
+                
+                for hours_cohort, msg in cohorts:
+                    abandoned = await db.get_abandoned_carts(hours=hours_cohort)
+                    for cart in abandoned:
+                        phone = cart.get("phone_number")
+                        if phone:
+                            await ctx.wa.send_text_message(phone, msg)
+                            await asyncio.sleep(1)  # Prevent rate limiting
             except Exception as e:
                 logger.error(f"Abandoned cart worker error: {e}")
 

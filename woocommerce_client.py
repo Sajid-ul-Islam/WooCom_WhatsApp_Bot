@@ -188,3 +188,39 @@ class WooCommerceClient:
         except Exception as e:
             logger.error(f"Error fetching orders for phone '{phone_number}': {e}")
             return []
+
+    async def update_order_status(self, order_id: int, status: str) -> Optional[Dict[str, Any]]:
+        """Update an order status in WooCommerce (e.g. to cancel it)."""
+        url = f"{self.base_api_url}/orders/{order_id}"
+        payload = {"status": status}
+        try:
+            response = await self._client.put(url, auth=self.auth, json=payload)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error updating WooCommerce order {order_id} status to {status}: {e}")
+            return None
+
+    async def create_order_note(self, order_id: int, note: str) -> Optional[Dict[str, Any]]:
+        """Create a note on a WooCommerce order."""
+        url = f"{self.base_api_url}/orders/{order_id}/notes"
+        payload = {"note": note}
+        try:
+            response = await self._client.post(url, auth=self.auth, json=payload)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error creating WooCommerce order note for order {order_id}: {e}")
+            return None
+
+    async def get_order(self, order_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch details of a single order."""
+        url = f"{self.base_api_url}/orders/{order_id}"
+        try:
+            response = await self._client.get(url, auth=self.auth)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error fetching WooCommerce order {order_id}: {e}")
+            return None
+

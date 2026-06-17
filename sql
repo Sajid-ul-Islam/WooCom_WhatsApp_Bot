@@ -45,7 +45,20 @@ create table if not exists public.whatsapp_users (
     chat_history jsonb default '[]'::jsonb,
     command_counts jsonb default '{}'::jsonb,
     bot_paused boolean default false,
+    state text default 'idle',
     last_active timestamp with time zone default timezone('utc'::text, now())
+);
+
+-- Support Tickets table (for returns, exchanges, complaints, and human escalations)
+create table if not exists public.support_tickets (
+    id uuid primary key default uuid_generate_v4(),
+    phone_number text not null,
+    issue_type text not null, -- 'return', 'exchange', 'complaint', 'escalation'
+    order_id bigint,
+    description text,
+    status text default 'open',
+    priority text default 'normal',
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
 -- Vector similarity search helper function

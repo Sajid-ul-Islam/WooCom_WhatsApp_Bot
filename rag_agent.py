@@ -184,7 +184,7 @@ class RAGAgent:
     async def _analyze_query(self, query: str) -> dict:
         """
         Uses the LLM to classify intent and extract search parameters.
-        Returns a dict: { "intent": str, "search_terms": str, "max_price": float|None, "min_price": float|None }
+        Returns a dict: { "intent": str, "search_terms": str, "max_price": float|None, "min_price": float|None, "sentiment": str }
         """
         system_prompt = (
             "You are a strict JSON query analyzer for an e-commerce store. "
@@ -194,14 +194,16 @@ class RAGAgent:
             '  "intent": "product_search" | "small_talk" | "support" | "order_status",\n'
             '  "search_terms": "Cleaned string focusing only on product features/names (e.g. \'red running shoes\'). Leave empty if not product_search",\n'
             '  "max_price": numeric or null,\n'
-            '  "min_price": numeric or null\n'
+            '  "min_price": numeric or null,\n'
+            '  "sentiment": "positive" | "neutral" | "frustrated" | "angry"\n'
             "}\n\n"
             "Rules:\n"
             "- If the user says 'hi', 'hello', 'thanks', intent = 'small_talk'.\n"
             "- If the user says 'where is my order', intent = 'order_status'.\n"
             "- If the user says 'i need help with a return', intent = 'support'.\n"
             "- If the user is asking to buy, browse, or find items, intent = 'product_search'.\n"
-            "- Extract max_price/min_price ONLY if explicitly mentioned (e.g. 'under 50' -> max_price: 50.0)."
+            "- Extract max_price/min_price ONLY if explicitly mentioned (e.g. 'under 50' -> max_price: 50.0).\n"
+            "- Detect the customer's sentiment. If they are showing annoyance, impatience, complaining, or using aggressive words, mark as 'frustrated' or 'angry'. Otherwise, default to 'neutral' or 'positive' if expressing satisfaction."
         )
         try:
             response_text = await self._call_llm(system_prompt, f"User Query: {query}")
@@ -220,7 +222,8 @@ class RAGAgent:
                 "intent": data.get("intent", "product_search"),
                 "search_terms": data.get("search_terms", query),
                 "max_price": data.get("max_price"),
-                "min_price": data.get("min_price")
+                "min_price": data.get("min_price"),
+                "sentiment": data.get("sentiment", "neutral")
             }
         except Exception as e:
             logger.error(f"Error analyzing query: {e}. Falling back to default product search.")
@@ -228,10 +231,11 @@ class RAGAgent:
                 "intent": "product_search",
                 "search_terms": query,
                 "max_price": None,
-                "min_price": None
+                "min_price": None,
+                "sentiment": "neutral"
             }
 
-    async def answer_query(self, query: str, history: list = None) -> Dict[str, Any]:
+    async def answer_query(self, query: str, history: list = None, orders: list = None) -> Dict[str, Any]:
         """
         Processes user query dynamically.
         """
@@ -243,6 +247,7 @@ class RAGAgent:
         search_terms = analysis["search_terms"] or query
         max_price = analysis["max_price"]
         min_price = analysis["min_price"]
+        sentiment = analysis["sentiment"]
 
         logger.info(f"Query Analysis: {analysis}")
 
@@ -265,7 +270,8 @@ class RAGAgent:
             response_text = await self._call_llm(system_prompt, query, history)
             return {
                 "text": response_text,
-                "products": []
+                "products": [],
+                "sentiment": sentiment
             }
 
         # 3. Product Search Intent
@@ -304,13 +310,31 @@ class RAGAgent:
             "- Italics with underscores, e.g. _italic text_\n"
             "- Strikethrough with tildes, e.g. ~strikethrough~\n"
             "- Use bullet points or emojis for lists.\n\n"
+            "Sizing Guidelines (for Panjabis and Shirts):\n"
+            "- Height 5'2\"-5'5\", Weight 50-60 kg: S (Small, Chest: 38\")\n"
+            "- Height 5'5\"-5'7\", Weight 60-70 kg: M (Medium, Chest: 40\")\n"
+            "- Height 5'7\"-5'10\", Weight 70-80 kg: L (Large, Chest: 42\")\n"
+            "- Height 5'10\"-6'0\", Weight 80-90 kg: XL (Extra Large, Chest: 44\")\n"
+            "- Height 6'0\"+, Weight 90+ kg: XXL (Double Extra Large, Chest: 46\")\n\n"
+            "Delivery Policy:\n"
+            "- Inside Dhaka: 80 BDT, 2-3 days\n"
+            "- Outside Dhaka: 150 BDT, 3-5 days\n"
+            "- Cash on Delivery (COD) is available nationwide.\n\n"
             "Guidelines:\n"
             "1. ONLY discuss and recommend products from the provided Context if it is relevant. "
             "2. If the user asks about products not in the store, reply politely that we don't have them but suggest the closest alternative from our store if possible.\n"
             "3. Always mention product prices clearly.\n"
             "4. Keep responses under 3 short paragraphs. WhatsApp users prefer quick answers.\n"
-            "5. To add a product to the cart, the user will reply with: *Add [ID]* (e.g. *Add 123*)."
+            "5. To add a product to the cart, the user will reply with: *Add [ID]* (e.g. *Add 123*).\n"
         )
+
+        if orders:
+            history_desc = []
+            for o in orders[:3]:
+                for item in o.get("items", []):
+                    history_desc.append(f"{item.get('name')}")
+            if history_desc:
+                system_prompt += f"6. Customer previously purchased: {', '.join(history_desc)}. Suggest similar or complementary items from the catalog if relevant.\n"
 
         context_str = "Available Products in Store:\n"
         if context_warning:
@@ -329,5 +353,6 @@ class RAGAgent:
 
         return {
             "text": response_text,
-            "products": matching_products
+            "products": matching_products,
+            "sentiment": sentiment
         }

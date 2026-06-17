@@ -26,6 +26,8 @@ async def handle_main_menu(ctx: BotContext, to: str):
             {"id": "menu_categories", "title": "🛍️ Browse Categories", "description": "Explore our store's catalog"},
             {"id": "menu_cart", "title": "🛒 View Cart", "description": "Check your selected items"},
             {"id": "menu_orders", "title": "📦 My Orders", "description": "Track your past purchases"},
+            {"id": "menu_size", "title": "📏 Size Assistant", "description": "Find your perfect size"},
+            {"id": "menu_cancel_order", "title": "❌ Cancel Order", "description": "Cancel a pending order"},
             {"id": "cart_clear", "title": "🗑️ Clear Cart", "description": "Empty your shopping cart"},
             {"id": "menu_human", "title": "🧑‍💻 Talk to Human", "description": "Pause the AI and talk to staff"}
         ]
@@ -221,7 +223,7 @@ async def handle_checkout_prompt(ctx: BotContext, to: str):
 
 
 async def handle_process_checkout(ctx: BotContext, to: str, text: str):
-    """Processes the order creation in WooCommerce and clears user cart."""
+    """Parses name and address, then prompts customer for COD order confirmation."""
     try:
         parts = text.split(",", 1)
         if len(parts) < 2:
@@ -237,13 +239,45 @@ async def handle_process_checkout(ctx: BotContext, to: str, text: str):
         )
         return
 
+    # Check cart is not empty
     cart_items = await ctx.db.get_cart(to)
     if not cart_items:
         await ctx.db.set_user_state(to, "idle")
         await ctx.wa.send_text_message(to, "Your cart is empty. Browse products to start shopping!")
         return
 
-    await ctx.wa.send_text_message(to, "⏳ Processing your order, please wait...")
+    # Calculate total for display
+    total = sum(item["price"] * item["quantity"] for item in cart_items)
+
+    # Transition to confirmation state, serializing the name and address
+    confirm_state = f"checkout_confirm|{name}|{address}"
+    await ctx.db.set_user_state(to, confirm_state)
+
+    confirm_text = (
+        f"📋 *Confirm your Cash on Delivery (COD) Order*\n\n"
+        f"Name: *{name}*\n"
+        f"Shipping Address:\n_{address}_\n\n"
+        f"Total Amount: *${total:.2f}*\n"
+        f"Payment Method: *Cash on Delivery (COD)*\n\n"
+        f"Do you want to confirm and place this order?"
+    )
+
+    buttons = [
+        {"id": "checkout_place", "title": "👍 Confirm Order"},
+        {"id": "checkout_cancel", "title": "❌ Cancel"}
+    ]
+    await ctx.wa.send_reply_buttons(to, confirm_text, buttons)
+
+
+async def handle_place_order(ctx: BotContext, to: str, name: str, address: str):
+    """Actually places the order in WooCommerce after customer confirmation."""
+    cart_items = await ctx.db.get_cart(to)
+    if not cart_items:
+        await ctx.db.set_user_state(to, "idle")
+        await ctx.wa.send_text_message(to, "Your cart is empty. Browse products to start shopping!")
+        return
+
+    await ctx.wa.send_text_message(to, "⏳ Placing your order, please wait...")
 
     order = await ctx.wc.create_order(
         phone_number=to,
@@ -252,7 +286,7 @@ async def handle_process_checkout(ctx: BotContext, to: str, text: str):
         address_text=address
     )
 
-    # Reset state regardless of outcome
+    # Reset state
     await ctx.db.set_user_state(to, "idle")
 
     if not order:
@@ -308,6 +342,111 @@ async def handle_view_orders(ctx: BotContext, to: str):
     await ctx.wa.send_reply_buttons(to, order_text, buttons)
 
 
+async def handle_size_rec_start(ctx: BotContext, to: str):
+    """Starts the sizing recommendation assistant flow."""
+    await ctx.db.set_user_state(to, "size_height")
+    await ctx.wa.send_text_message(
+        to,
+        "📏 *Size Assistant*\n\n"
+        "Let's find your perfect size! Please reply with your *height* (e.g., _5'6\"_ or _170 cm_):\n\n"
+        "Type *cancel* to abort."
+    )
+
+
+async def handle_cancel_order_request(ctx: BotContext, to: str, order_id_str: str = ""):
+    """Initiates the order cancellation process."""
+    if not order_id_str:
+        await ctx.db.set_user_state(to, "waiting_for_cancel_id")
+        await ctx.wa.send_text_message(
+            to,
+            "❌ *Order Cancellation*\n\n"
+            "Please reply with the Order ID you wish to cancel (e.g. _10254_):\n\n"
+            "Type *cancel* to go back."
+        )
+        return
+
+    try:
+        order_id = int(order_id_str.strip())
+    except ValueError:
+        await ctx.wa.send_text_message(to, "⚠️ Invalid Order ID. Please reply with a valid numeric Order ID:")
+        return
+
+    await ctx.wa.send_text_message(to, f"🔍 Looking up order #{order_id}...")
+    order = await ctx.wc.get_order(order_id)
+
+    if not order:
+        await ctx.db.set_user_state(to, "idle")
+        await ctx.wa.send_text_message(to, f"❌ We couldn't find order #{order_id} in our store.")
+        return
+
+    # Check ownership (match last 10 digits of billing phone)
+    billing_phone = order.get("billing", {}).get("phone", "")
+    bp_clean = normalize_phone(billing_phone)
+    to_clean = normalize_phone(to)
+
+    if not bp_clean or to_clean[-10:] != bp_clean[-10:]:
+        await ctx.db.set_user_state(to, "idle")
+        await ctx.wa.send_text_message(
+            to,
+            "⚠️ Security Check Failed.\n\n"
+            "For security reasons, you can only cancel orders placed using this phone number."
+        )
+        return
+
+    status = order.get("status", "").lower()
+    if status not in ["pending", "on-hold", "processing"]:
+        await ctx.db.set_user_state(to, "idle")
+        await ctx.wa.send_text_message(
+            to,
+            f"⚠️ Cancellation Not Possible.\n\n"
+            f"Order #{order_id} is currently *{status.upper()}*. "
+            "Only orders that are pending or processing can be cancelled automatically. "
+            "Please contact a human agent if you need assistance."
+        )
+        return
+
+    # Ask for confirmation
+    confirm_text = (
+        f"❓ *Confirm Cancellation*\n\n"
+        f"Are you sure you want to cancel order *#{order_id}*?"
+    )
+    buttons = [
+        {"id": f"order_cancel_confirm_{order_id}", "title": "Yes, Cancel Order"},
+        {"id": "order_cancel_keep", "title": "No, Keep Order"}
+    ]
+    await ctx.wa.send_reply_buttons(to, confirm_text, buttons)
+
+
+async def handle_cancel_order_confirm(ctx: BotContext, to: str, order_id: int):
+    """Processes order cancellation in WooCommerce and notifies customer."""
+    await ctx.wa.send_text_message(to, f"⏳ Cancelling order #{order_id}...")
+    success = await ctx.wc.update_order_status(order_id, "cancelled")
+    
+    await ctx.db.set_user_state(to, "idle")
+
+    if not success:
+        await ctx.wa.send_text_message(to, "❌ Failed to cancel the order. Please try again or contact support.")
+        return
+
+    await ctx.wc.create_order_note(order_id, "Order cancelled by customer via WhatsApp Bot.")
+    
+    # Update cache if it exists
+    live_orders = await ctx.wc.get_orders_by_phone(to)
+    if live_orders:
+        await ctx.db.cache_orders(live_orders, to)
+
+    msg = f"✅ *Order #{order_id} has been cancelled.*\n\nThank you. We hope to serve you again in the future!"
+    buttons = [{"id": "menu_main", "title": "🏠 Main Menu"}]
+    await ctx.wa.send_reply_buttons(to, msg, buttons)
+
+
+async def handle_cancel_order_keep(ctx: BotContext, to: str):
+    """Aborts order cancellation."""
+    await ctx.db.set_user_state(to, "idle")
+    buttons = [{"id": "menu_main", "title": "🏠 Main Menu"}]
+    await ctx.wa.send_reply_buttons(to, "Order cancellation aborted. Your order is safe! 👍", buttons)
+
+
 async def handle_clear_cart(ctx: BotContext, to: str):
     """Clears the shopping cart."""
     await ctx.db.clear_cart(to)
@@ -335,8 +474,23 @@ async def handle_ai_search(ctx: BotContext, to: str, query: str):
     await ctx.wa.send_text_message(to, "🔍 Searching the catalog, please wait...")
 
     history = await ctx.db.get_user_history(to)
+    orders = await ctx.db.get_cached_orders(to)
 
-    result = await ctx.agent.answer_query(query, history=history)
+    result = await ctx.agent.answer_query(query, history=history, orders=orders)
+    sentiment = result.get("sentiment", "neutral")
+
+    # Sentiment auto-escalation
+    if sentiment in ["frustrated", "angry"]:
+        logger.info(f"Auto-escalating user {to} due to {sentiment} sentiment.")
+        escalation_msg = (
+            "⚠️ *Human Agent Escalation*\n\n"
+            "I detect that you are frustrated or need urgent assistance. "
+            "I am pausing my automated responses and transferring you to our human support team."
+        )
+        await ctx.wa.send_text_message(to, escalation_msg)
+        await handle_human_agent(ctx, to)
+        return
+
     response_text = result["text"]
     matching_products = result["products"]
 
@@ -382,6 +536,8 @@ ACTION_HANDLERS = {
     "menu_human": handle_human_agent,
     "cart_checkout": handle_checkout_prompt,
     "cart_clear": handle_clear_cart,
+    "menu_size": handle_size_rec_start,
+    "menu_cancel_order": lambda ctx, to: handle_cancel_order_request(ctx, to, ""),
 }
 
 PREFIX_HANDLERS = [
@@ -389,6 +545,7 @@ PREFIX_HANDLERS = [
     ("prod_", handle_product_detail),
     ("add_", handle_add_to_cart),
     ("rmv_", handle_remove_from_cart),
+    ("order_cancel_confirm_", lambda ctx, to, order_id: handle_cancel_order_confirm(ctx, to, order_id)),
 ]
 
 TEXT_COMMANDS = {
@@ -413,6 +570,13 @@ TEXT_COMMANDS = {
     "talk to human": handle_human_agent,
     "human": handle_human_agent,
     "support": handle_human_agent,
+    "size": handle_size_rec_start,
+    "size guide": handle_size_rec_start,
+    "size chart": handle_size_rec_start,
+    "size recommendation": handle_size_rec_start,
+    "whats my size": handle_size_rec_start,
+    "cancel order": lambda ctx, to: handle_cancel_order_request(ctx, to, ""),
+    "order cancellation": lambda ctx, to: handle_cancel_order_request(ctx, to, ""),
 }
 
 
@@ -421,6 +585,30 @@ TEXT_COMMANDS = {
 
 async def route_action(ctx: BotContext, to: str, action_id: str) -> bool:
     """Route an interactive action to the appropriate handler. Returns True if handled."""
+    # Handle COD checkout confirmation click
+    if action_id == "checkout_place":
+        user_state = await ctx.db.get_user_state(to)
+        if user_state.startswith("checkout_confirm|"):
+            parts = user_state.split("|", 2)
+            if len(parts) == 3:
+                await handle_place_order(ctx, to, parts[1], parts[2])
+                return True
+        await ctx.db.set_user_state(to, "idle")
+        await ctx.wa.send_text_message(to, "❌ Session expired. Checkout cancelled.")
+        await handle_main_menu(ctx, to)
+        return True
+
+    if action_id == "checkout_cancel":
+        await ctx.db.set_user_state(to, "idle")
+        await ctx.wa.send_text_message(to, "Order checkout cancelled.")
+        await handle_main_menu(ctx, to)
+        return True
+
+    # Handle order cancellation abort click
+    if action_id == "order_cancel_keep":
+        await handle_cancel_order_keep(ctx, to)
+        return True
+
     # Exact match
     if action_id in ACTION_HANDLERS:
         await ACTION_HANDLERS[action_id](ctx, to)
@@ -443,6 +631,12 @@ async def route_text(ctx: BotContext, to: str, text: str):
     # Exact keyword match
     if text_lower in TEXT_COMMANDS:
         await TEXT_COMMANDS[text_lower](ctx, to)
+        return
+
+    # Regex: "cancel order 12345"
+    cancel_match = re.match(r"^cancel\s+order\s+(\d+)", text_lower)
+    if cancel_match:
+        await handle_cancel_order_request(ctx, to, cancel_match.group(1))
         return
 
     # Regex: "Add 123"
@@ -508,16 +702,44 @@ async def process_incoming_message(
             logger.info(f"Bot paused for {from_number}. Ignoring message.")
             return
 
-        # --- State machine: check if we're waiting for checkout details ---
+        # --- State machine checking ---
         user_state = await ctx.db.get_user_state(from_number)
 
-        if user_state == "checkout_pending" and incoming_text:
-            if incoming_text.lower() in ["cancel", "/cancel", "back"]:
+        if incoming_text and incoming_text.lower() in ["cancel", "/cancel", "back", "abort"]:
+            if user_state != "idle":
                 await ctx.db.set_user_state(from_number, "idle")
-                await ctx.wa.send_text_message(from_number, "Checkout cancelled.")
+                await ctx.wa.send_text_message(from_number, "❌ Process cancelled.")
                 await handle_main_menu(ctx, from_number)
-            else:
-                await handle_process_checkout(ctx, from_number, incoming_text)
+                return
+
+        if user_state == "checkout_pending" and incoming_text:
+            await handle_process_checkout(ctx, from_number, incoming_text)
+            return
+
+        if user_state == "size_height" and incoming_text:
+            height = incoming_text.strip()
+            await ctx.db.set_user_state(from_number, f"size_weight|{height}")
+            await ctx.wa.send_text_message(
+                from_number,
+                f"Recorded Height: *{height}*.\n\n"
+                f"Now please reply with your *weight* (e.g., _65 kg_ or _140 lbs_):\n\n"
+                f"Type *cancel* to abort."
+            )
+            return
+
+        if user_state.startswith("size_weight|") and incoming_text:
+            height = user_state.split("|", 1)[1]
+            weight = incoming_text.strip()
+            await ctx.db.set_user_state(from_number, "idle")
+            # Ask AI sizing query
+            await handle_ai_search(
+                ctx, from_number,
+                f"What size should I wear? Height: {height}, Weight: {weight}."
+            )
+            return
+
+        if user_state == "waiting_for_cancel_id" and incoming_text:
+            await handle_cancel_order_request(ctx, from_number, incoming_text)
             return
 
         if action_id:

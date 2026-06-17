@@ -382,6 +382,32 @@ class DatabaseClient:
             
         return stats
 
+    # ==================== SUPPORT TICKETS ====================
+
+    async def create_support_ticket(self, phone_number: str, issue_type: str, order_id: int | None, description: str, priority: str = "normal") -> dict | None:
+        """Create a new support ticket in Supabase."""
+        if not self.client:
+            return None
+        phone = normalize_phone(phone_number)
+        data = {
+            "phone_number": phone,
+            "issue_type": issue_type,
+            "order_id": order_id,
+            "description": description,
+            "status": "open",
+            "priority": priority,
+        }
+        try:
+            response = await self._run_sync(
+                lambda: self.client.table("support_tickets").insert(data).execute()
+            )
+            if response.data:
+                return response.data[0]
+            return None
+        except Exception as e:
+            logger.error(f"Error creating support ticket: {e}")
+            return None
+
     # ==================== PRODUCT SYNC ====================
 
     async def upsert_product(self, doc: dict) -> bool:
