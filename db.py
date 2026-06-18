@@ -48,28 +48,33 @@ class DatabaseClient:
             logger.error(f"Error fetching cart for {phone}: {e}")
             return []
 
-    async def add_to_cart(self, phone_number: str, product_id: int, name: str, price: float, quantity: int = 1, image_url: str = ""):
+    async def add_to_cart(self, phone_number: str, product_id: int, name: str, price: float, quantity: int = 1, image_url: str = "", variation_id: int = None, variation_name: str = ""):
         if not self.client:
             return []
         phone = normalize_phone(phone_number)
         cart = await self.get_cart(phone)
         
-        # Check if item exists
+        # Check if item exists (match product_id + variation_id so different sizes are separate items)
         found = False
         for item in cart:
-            if item["product_id"] == product_id:
+            if item["product_id"] == product_id and item.get("variation_id") == variation_id:
                 item["quantity"] += quantity
                 found = True
                 break
         
         if not found:
-            cart.append({
+            item = {
                 "product_id": product_id,
                 "name": name,
                 "price": float(price) if price else 0.0,
                 "quantity": quantity,
                 "image_url": image_url
-            })
+            }
+            if variation_id is not None:
+                item["variation_id"] = variation_id
+            if variation_name:
+                item["variation_name"] = variation_name
+            cart.append(item)
             
         try:
             await self._run_sync(

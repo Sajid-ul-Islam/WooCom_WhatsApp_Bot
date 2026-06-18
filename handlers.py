@@ -96,7 +96,8 @@ async def handle_category_products(ctx: BotContext, to: str, category_id: int):
 
 
 async def handle_product_detail(ctx: BotContext, to: str, product_id: int):
-    """Sends product details, including pricing, description, and image."""
+    """Sends product details, including pricing, description, and image.
+    Detects if product has variations (e.g. sizes) and adjusts buttons accordingly."""
     product = await ctx.wc.get_product(product_id)
     if not product:
         await ctx.wa.send_text_message(to, "Sorry, I couldn't find details for that product.")
@@ -121,11 +122,21 @@ async def handle_product_detail(ctx: BotContext, to: str, product_id: int):
     images = product.get("images", [])
     image_url = images[0].get("src") if images else None
 
-    buttons = [
-        {"id": f"add_{product_id}", "title": "🛒 Add to Cart"},
-        {"id": "menu_cart", "title": "🛍️ View Cart"},
-        {"id": "menu_main", "title": "🏠 Main Menu"}
-    ]
+    # Check product type: variable products need size selection before adding to cart
+    product_type = product.get("type", "simple")
+
+    if product_type == "variable":
+        buttons = [
+            {"id": f"size_sel_{product_id}", "title": "📏 Select Size"},
+            {"id": f"size_chart_{product_id}", "title": "📐 Size Chart"},
+            {"id": "menu_main", "title": "🏠 Main Menu"}
+        ]
+    else:
+        buttons = [
+            {"id": f"add_{product_id}", "title": "🛒 Add to Cart"},
+            {"id": "menu_cart", "title": "🛍️ View Cart"},
+            {"id": "menu_main", "title": "🏠 Main Menu"}
+        ]
 
     if image_url:
         await ctx.wa.send_image_message(to, image_url, caption=caption)
@@ -135,10 +146,15 @@ async def handle_product_detail(ctx: BotContext, to: str, product_id: int):
 
 
 async def handle_add_to_cart(ctx: BotContext, to: str, product_id: int, quantity: int = 1):
-    """Adds a product to the user's Supabase cart and notifies them."""
+    """Adds a simple (non-variable) product to the user's Supabase cart."""
     product = await ctx.wc.get_product(product_id)
     if not product:
         await ctx.wa.send_text_message(to, "Sorry, that product is no longer available.")
+        return
+
+    # If product is variable, route to size selection instead
+    if product.get("type") == "variable":
+        await handle_show_variations(ctx, to, product_id)
         return
 
     images = product.get("images", [])
@@ -154,6 +170,143 @@ async def handle_add_to_cart(ctx: BotContext, to: str, product_id: int, quantity
     )
 
     text = f"✅ *{product.get('name')}* has been added to your cart!"
+    buttons = [
+        {"id": "menu_cart", "title": "🛍️ View Cart"},
+        {"id": "menu_categories", "title": "Browse More"},
+        {"id": "menu_main", "title": "🏠 Main Menu"}
+    ]
+    await ctx.wa.send_reply_buttons(to, text, buttons)
+
+
+# ==================== VARIATION / SIZE HANDLERS ====================
+
+
+async def handle_show_variations(ctx: BotContext, to: str, product_id: int):
+    """Shows available size options for a variable product as a selectable list."""
+    product = await ctx.wc.get_product(product_id)
+    if not product:
+        await ctx.wa.send_text_message(to, "Sorry, I couldn't find that product.")
+        return
+
+    variations = await ctx.wc.get_product_variations(product_id)
+    if not variations:
+        await ctx.wa.send_text_message(to, "This product has no available size options at the moment.")
+        return
+
+    rows = []
+    for v in variations:
+        if v.get("status") != "publish":
+            continue
+
+        # Extract size attribute value
+        size = "Standard"
+        for attr in v.get("attributes", []):
+            if attr.get("name", "").lower() == "size":
+                size = attr.get("option", "Standard")
+                break
+
+        var_price = v.get("price") or product.get("price") or "0"
+        stock_status = v.get("stock_status", "instock")
+        in_stock = stock_status != "outofstock"
+
+        price_text = f"${var_price}" if var_price else ""
+        rows.append({
+            "id": f"varadd_{product_id}_{v['id']}",
+            "title": size[:24],
+            "description": f"{price_text}" if in_stock else f"{price_text} - Out of Stock"
+        })
+
+    if not rows:
+        await ctx.wa.send_text_message(to, "No sizes are currently available for this product.")
+        return
+
+    sections = [
+        {
+            "title": "Available Sizes",
+            "rows": rows
+        },
+        {
+            "title": "Help",
+            "rows": [
+                {"id": f"size_chart_{product_id}", "title": "📐 View Size Chart", "description": "See our sizing guide"}
+            ]
+        }
+    ]
+
+    await ctx.wa.send_list_message(
+        to=to,
+        button_text="Select Size",
+        body_text=f"Choose your size for *{product.get('name')}*:",
+        sections=sections,
+        header_text="Select Size"
+    )
+
+
+async def handle_size_chart(ctx: BotContext, to: str, product_id: int):
+    """Shows the sizing guide/chart based on the CRM guidelines."""
+    size_guide = (
+        "📏 *Size Guide*\n\n"
+        "*Panjabis & Shirts:*\n"
+        "• S (Small): Height 5'2\"-5'5\", Weight 50-60 kg (Chest: 38\")\n"
+        "• M (Medium): Height 5'5\"-5'7\", Weight 60-70 kg (Chest: 40\")\n"
+        "• L (Large): Height 5'7\"-5'10\", Weight 70-80 kg (Chest: 42\")\n"
+        "• XL (XL): Height 5'10\"-6'0\", Weight 80-90 kg (Chest: 44\")\n"
+        "• XXL (2XL): Height 6'0\"+, Weight 90+ kg (Chest: 46\")\n\n"
+        "*Delivery:*\n"
+        "• Inside Dhaka: 80 BDT, 2-3 days\n"
+        "• Outside Dhaka: 150 BDT, 3-5 days\n"
+        "• Cash on Delivery (COD) available nationwide.\n\n"
+        "Need a personal recommendation? Use the *Size Assistant* from the main menu!"
+    )
+
+    buttons = [
+        {"id": f"size_sel_{product_id}", "title": "📏 Select Size"},
+        {"id": "menu_main", "title": "🏠 Main Menu"}
+    ]
+    await ctx.wa.send_reply_buttons(to, size_guide, buttons)
+
+
+async def handle_add_variation_to_cart(ctx: BotContext, to: str, product_id: int, variation_id: int):
+    """Adds a specific variation (size) of a product to the user's cart."""
+    # Get parent product for name and image
+    product = await ctx.wc.get_product(product_id)
+    if not product:
+        await ctx.wa.send_text_message(to, "Sorry, that product is no longer available.")
+        return
+
+    # Get the specific variation for its price and attribute details
+    variation = await ctx.wc.get_product_variation(product_id, variation_id)
+    if not variation:
+        await ctx.wa.send_text_message(to, "Sorry, that size option is no longer available.")
+        return
+
+    # Extract the size name from variation attributes
+    size_name = "Standard"
+    for attr in variation.get("attributes", []):
+        if attr.get("name", "").lower() == "size":
+            size_name = attr.get("option", "Standard")
+            break
+
+    # Use variation price if available, otherwise fall back to parent product price
+    var_price = variation.get("price") or product.get("price")
+    product_name = product.get("name", "")
+    full_name = f"{product_name} ({size_name})"
+
+    images = product.get("images", [])
+    image_url = images[0].get("src") if images else ""
+
+    await ctx.db.add_to_cart(
+        phone_number=to,
+        product_id=product_id,
+        variation_id=variation_id,
+        variation_name=f"Size: {size_name}",
+        name=full_name,
+        price=var_price,
+        quantity=1,
+        image_url=image_url
+    )
+
+    text = f"✅ *{full_name}* has been added to your cart!"
     buttons = [
         {"id": "menu_cart", "title": "🛍️ View Cart"},
         {"id": "menu_categories", "title": "Browse More"},
@@ -544,6 +697,8 @@ PREFIX_HANDLERS = [
     ("cat_", handle_category_products),
     ("prod_", handle_product_detail),
     ("add_", handle_add_to_cart),
+    ("size_sel_", handle_show_variations),
+    ("size_chart_", handle_size_chart),
     ("rmv_", handle_remove_from_cart),
     ("order_cancel_confirm_", lambda ctx, to, order_id: handle_cancel_order_confirm(ctx, to, order_id)),
 ]
@@ -613,6 +768,16 @@ async def route_action(ctx: BotContext, to: str, action_id: str) -> bool:
     if action_id in ACTION_HANDLERS:
         await ACTION_HANDLERS[action_id](ctx, to)
         return True
+
+    # Handle "varadd_{product_id}_{variation_id}" prefix specially (needs two ints)
+    if action_id.startswith("varadd_"):
+        parts = action_id[7:].split("_")
+        if len(parts) == 2:
+            try:
+                await handle_add_variation_to_cart(ctx, to, int(parts[0]), int(parts[1]))
+                return True
+            except ValueError:
+                pass
 
     # Prefix match (e.g. "cat_123" -> handle_category_products(ctx, to, 123))
     for prefix, handler in PREFIX_HANDLERS:

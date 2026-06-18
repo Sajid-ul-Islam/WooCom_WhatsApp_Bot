@@ -121,10 +121,14 @@ class WooCommerceClient:
         # Parse cart items into WooCommerce format
         line_items = []
         for item in cart_items:
-            line_items.append({
+            line_item = {
                 "product_id": item["product_id"],
                 "quantity": item["quantity"]
-            })
+            }
+            # Pass variation_id if the item is a product variation (e.g. a specific size)
+            if item.get("variation_id"):
+                line_item["variation_id"] = item["variation_id"]
+            line_items.append(line_item)
 
         # Standard fallback for billing name splitting
         names = customer_name.split(" ", 1)
@@ -211,6 +215,38 @@ class WooCommerceClient:
             return response.json()
         except Exception as e:
             logger.error(f"Error creating WooCommerce order note for order {order_id}: {e}")
+            return None
+
+    async def get_product_variations(self, product_id: int) -> List[Dict[str, Any]]:
+        """Fetch all variations for a variable product (e.g. different sizes)."""
+        url = f"{self.base_api_url}/products/{product_id}/variations"
+        all_variations = []
+        page = 1
+        per_page = 100
+        while True:
+            params = {"page": page, "per_page": per_page}
+            try:
+                response = await self._client.get(url, auth=self.auth, params=params)
+                response.raise_for_status()
+                variations = response.json()
+                if not variations:
+                    break
+                all_variations.extend(variations)
+                page += 1
+            except Exception as e:
+                logger.error(f"Error fetching variations for product {product_id}: {e}")
+                break
+        return all_variations
+
+    async def get_product_variation(self, product_id: int, variation_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch details of a single variation (e.g. a specific size)."""
+        url = f"{self.base_api_url}/products/{product_id}/variations/{variation_id}"
+        try:
+            response = await self._client.get(url, auth=self.auth)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error fetching variation {variation_id} for product {product_id}: {e}")
             return None
 
     async def get_order(self, order_id: int) -> Optional[Dict[str, Any]]:
