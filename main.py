@@ -254,6 +254,19 @@ async def api_dashboard_stats(request: Request):
     return JSONResponse(content=stats)
 
 
+@app.get("/api/wit-stats")
+async def api_wit_stats(request: Request):
+    """Returns Wit.ai classification statistics."""
+    if not verify_admin_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized. Provide a valid API key via ?api_key= or Authorization: Bearer header.")
+    if not ctx or not ctx.wit:
+        return JSONResponse(content={"configured": False, "total_calls": 0, "intents": {}})
+    return JSONResponse(content={
+        "configured": ctx.wit.configured,
+        **ctx.wit.stats.snapshot()
+    })
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard():
     """Serves the dashboard HTML interface."""

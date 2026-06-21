@@ -342,6 +342,53 @@
         </div>
     </div>
 
+    <!-- Wit.ai Stats -->
+    <div class="card" style="margin-bottom: 2rem;">
+        <div class="table-header">
+            AI Classification 🤖
+            <span id="wit-configured-badge" class="badge badge-info" style="margin-left: 0.75rem; font-size: 0.7rem;">checking...</span>
+        </div>
+        <div id="wit-stats-content">
+            <div class="stats-grid" style="margin-bottom: 0;">
+                <div class="stat-card">
+                    <div class="stat-title">Total Calls</div>
+                    <div class="stat-value" id="wit-total-calls" style="font-size: 1.8rem;">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">Success Rate</div>
+                    <div class="stat-value" id="wit-success-rate" style="font-size: 1.8rem; color: var(--success);">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">Calls / Min</div>
+                    <div class="stat-value" id="wit-rpm" style="font-size: 1.8rem;">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">Last Classification</div>
+                    <div class="stat-value" id="wit-last-text" style="font-size: 0.9rem; font-weight: 400;">-</div>
+                </div>
+            </div>
+            <div style="overflow-x: auto; margin-top: 1rem;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Intent</th>
+                            <th>Calls</th>
+                            <th>Avg Confidence</th>
+                            <th>Min</th>
+                            <th>Max</th>
+                        </tr>
+                    </thead>
+                    <tbody id="wit-intents-tbody">
+                        <tr><td colspan="5" class="text-muted">No classifications yet.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div id="wit-not-configured" style="display: none; padding: 1rem; color: var(--warning);">
+            ⚠️ Wit.ai is not configured. Set <code>WIT_AI_SERVER_TOKEN</code> to enable.
+        </div>
+    </div>
+
     <div class="card" style="margin-bottom: 2rem;">
         <div class="table-header">Broadcast Center 📢</div>
         <p class="text-muted" style="margin-bottom: 1rem; font-size: 0.875rem;">Send a promotional message to all active users (capped at 50 for safety).</p>
@@ -529,20 +576,86 @@
             const loader = document.getElementById('loader');
             loader.style.display = 'inline-block';
             try {
-                const response = await fetch(apiUrl('/api/dashboard-stats'));
-                if (response.status === 401) {
+                const [statsRes, witRes] = await Promise.all([
+                    fetch(apiUrl('/api/dashboard-stats')),
+                    fetch(apiUrl('/api/wit-stats'))
+                ]);
+                if (statsRes.status === 401 || witRes.status === 401) {
                     sessionStorage.removeItem('dashboard_api_key');
                     API_KEY = '';
                     showAuthOverlay();
                     return;
                 }
-                const data = await response.json();
-                renderDashboard(data);
+                const statsData = await statsRes.json();
+                const witData = await witRes.json();
+                renderDashboard(statsData);
+                renderWitStats(witData);
             } catch (err) {
                 console.error('Failed to fetch dashboard stats', err);
             } finally {
                 loader.style.display = 'none';
             }
+        };
+
+        const renderWitStats = (data) => {
+            const badge = document.getElementById('wit-configured-badge');
+            const notConfigured = document.getElementById('wit-not-configured');
+            const content = document.getElementById('wit-stats-content');
+
+            if (!data.configured) {
+                badge.textContent = 'Not configured';
+                badge.className = 'badge badge-warning';
+                notConfigured.style.display = 'block';
+                content.style.display = 'none';
+                return;
+            }
+
+            badge.textContent = 'Active';
+            badge.className = 'badge badge-success';
+            notConfigured.style.display = 'none';
+            content.style.display = 'block';
+
+            document.getElementById('wit-total-calls').textContent = data.total_calls || 0;
+            document.getElementById('wit-success-rate').textContent = (data.success_rate * 100).toFixed(1) + '%';
+            document.getElementById('wit-rpm').textContent = data.calls_per_minute || 0;
+
+            // Last classification
+            const last = data.last_classification;
+            const lastEl = document.getElementById('wit-last-text');
+            if (last && last.text) {
+                const intentName = last.intents?.[0]?.name || '?';
+                const confidence = last.intents?.[0]?.confidence || 0;
+                lastEl.innerHTML = `<span class="text-muted">"${escapeHtml(last.text)}" → </span><strong>${intentName}</strong> (${(confidence * 100).toFixed(0)}%)`;
+            } else {
+                lastEl.textContent = '- No classifications yet';
+            }
+
+            // Intent breakdown table
+            const tbody = document.getElementById('wit-intents-tbody');
+            const intents = data.intents || {};
+            const keys = Object.keys(intents);
+            if (keys.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-muted">No classifications yet.</td></tr>';
+            } else {
+                tbody.innerHTML = keys.map(name => {
+                    const i = intents[name];
+                    return `
+                        <tr>
+                            <td><strong>${escapeHtml(name)}</strong></td>
+                            <td>${i.count}</td>
+                            <td>${(i.avg_confidence * 100).toFixed(0)}%</td>
+                            <td>${(i.min_confidence * 100).toFixed(0)}%</td>
+                            <td>${(i.max_confidence * 100).toFixed(0)}%</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+        };
+
+        const escapeHtml = (str) => {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
         };
 
         const sendBroadcast = async () => {
