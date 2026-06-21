@@ -237,8 +237,34 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.error(f"Abandoned cart worker error: {e}")
 
-    # Fire and forget the background task
+    # --- Start Fuzzy Index Re-sync Worker ---
+    FUZZY_RESYNC_INTERVAL = int(os.getenv("FUZZY_RESYNC_INTERVAL", "21600"))  # 6 hours default
+
+    async def fuzzy_reindex_worker():
+        while True:
+            try:
+                try:
+                    await asyncio.wait_for(_shutdown_event.wait(), timeout=FUZZY_RESYNC_INTERVAL)
+                    logger.info("Fuzzy index re-sync worker shutting down gracefully...")
+                    return
+                except asyncio.TimeoutError:
+                    pass  # Normal timeout, run the re-sync
+
+                logger.info("Fuzzy index: starting periodic re-sync from WooCommerce...")
+                try:
+                    indexed = await fuzzy.sync_from_woo(wc_client)
+                    logger.info(f"Fuzzy index: re-synced {indexed} products from WooCommerce.")
+                except Exception as e:
+                    logger.warning(f"Fuzzy index: periodic re-sync failed: {e}")
+            except asyncio.CancelledError:
+                logger.info("Fuzzy index re-sync worker cancelled. Exiting...")
+                return
+            except Exception as e:
+                logger.error(f"Fuzzy index re-sync worker error: {e}")
+
+    # Fire and forget background tasks
     asyncio.create_task(abandoned_cart_worker())
+    asyncio.create_task(fuzzy_reindex_worker())
 
     yield
 
@@ -269,6 +295,36 @@ async def api_dashboard_stats(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized. Provide a valid API key via ?api_key= or Authorization: Bearer header.")
     stats = await db.get_dashboard_stats()
     return JSONResponse(content=stats)
+
+
+@app.get("/api/fuzzy-search")
+async def api_fuzzy_search(request: Request, q: str = "", max_price: float = None, min_price: float = None, limit: int = 10):
+    """Fuzzy product search endpoint for the dashboard."""
+    if not verify_admin_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized.")
+    if not ctx or not ctx.fuzzy or not ctx.fuzzy.ready:
+        return JSONResponse({"results": [], "total": 0, "status": "index_not_ready"})
+    results = ctx.fuzzy.search(
+        q,
+        max_results=limit,
+        min_score=20.0,
+        max_price=max_price,
+        min_price=min_price,
+    )
+    # Strip heavy fields for the response
+    slim = []
+    for p in results:
+        slim.append({
+            "id": p.get("id"),
+            "name": p.get("name"),
+            "price": p.get("price"),
+            "permalink": p.get("permalink"),
+            "score": p.get("_fuzzy_score"),
+            "categories": [c.get("name", "") for c in p.get("categories", [])],
+            "available_sizes": p.get("_available_sizes", []),
+            "image": p.get("images", [{}])[0].get("src") if p.get("images") else None,
+        })
+    return JSONResponse({"results": slim, "total": len(slim), "query": q})
 
 
 @app.get("/api/wit-stats")

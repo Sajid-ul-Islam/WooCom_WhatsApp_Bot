@@ -389,6 +389,42 @@
         </div>
     </div>
 
+    <!-- Fuzzy Search Tester -->
+    <div class="card" style="margin-bottom: 2rem;">
+        <div class="table-header">
+            Fuzzy Product Search 🔍
+            <span id="fuzzy-index-badge" class="badge badge-info" style="margin-left: 0.75rem; font-size: 0.7rem;">checking...</span>
+        </div>
+        <p class="text-muted" style="margin-bottom: 1rem; font-size: 0.875rem;">Preview fuzzy search results — test queries like product names, prices, sizes, or categories.</p>
+        <div style="display: flex; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap;">
+            <input type="text" id="fuzzy-query" class="auth-input" style="margin-bottom: 0; flex: 1; min-width: 200px;" placeholder="Search products... (e.g. 'red shirt XL', 'panjabi under 500', 'large')" onkeypress="if(event.key==='Enter') runFuzzySearch()">
+            <button onclick="runFuzzySearch()" style="background: var(--accent-solid); color: #fff; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; font-weight: 600; cursor: pointer; white-space: nowrap;">Search</button>
+        </div>
+        <div id="fuzzy-results" style="display: none;">
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Score</th>
+                            <th>Image</th>
+                            <th>Product</th>
+                            <th>Price</th>
+                            <th>Categories</th>
+                            <th>Sizes</th>
+                            <th>Link</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fuzzy-tbody">
+                    </tbody>
+                </table>
+            </div>
+            <p id="fuzzy-count" class="text-muted" style="margin-top: 0.75rem; font-size: 0.8rem;"></p>
+        </div>
+        <div id="fuzzy-empty" style="display: none; padding: 1.5rem; text-align: center; color: var(--text-secondary);">
+            No results found. Try a different query.
+        </div>
+    </div>
+
     <div class="card" style="margin-bottom: 2rem;">
         <div class="table-header">Broadcast Center 📢</div>
         <p class="text-muted" style="margin-bottom: 1rem; font-size: 0.875rem;">Send a promotional message to all active users (capped at 50 for safety).</p>
@@ -658,6 +694,104 @@
             return div.innerHTML;
         };
 
+        // ---- Fuzzy Search Tester ----
+        const runFuzzySearch = async () => {
+            if (!API_KEY) { showAuthOverlay(); return; }
+            const q = document.getElementById('fuzzy-query').value.trim();
+            const resultsDiv = document.getElementById('fuzzy-results');
+            const emptyDiv = document.getElementById('fuzzy-empty');
+            const tbody = document.getElementById('fuzzy-tbody');
+            const countEl = document.getElementById('fuzzy-count');
+
+            if (!q) {
+                resultsDiv.style.display = 'none';
+                emptyDiv.style.display = 'block';
+                emptyDiv.textContent = 'Type a search query to preview results.';
+                return;
+            }
+
+            tbody.innerHTML = '<tr><td colspan="7" class="text-muted">Searching...</td></tr>';
+            resultsDiv.style.display = 'block';
+            emptyDiv.style.display = 'none';
+
+            try {
+                const res = await fetch(apiUrl(`/api/fuzzy-search?q=${encodeURIComponent(q)}&limit=10`));
+                if (res.status === 401) {
+                    sessionStorage.removeItem('dashboard_api_key');
+                    API_KEY = '';
+                    showAuthOverlay();
+                    return;
+                }
+                const data = await res.json();
+
+                const badge = document.getElementById('fuzzy-index-badge');
+                if (data.status === 'index_not_ready') {
+                    badge.textContent = 'Index loading...';
+                    badge.className = 'badge badge-warning';
+                } else {
+                    badge.textContent = 'Ready';
+                    badge.className = 'badge badge-success';
+                }
+
+                if (data.results && data.results.length > 0) {
+                    tbody.innerHTML = data.results.map(p => {
+                        const score = p.score || 0;
+                        let scoreColor = 'var(--text-secondary)';
+                        if (score >= 70) scoreColor = 'var(--success)';
+                        else if (score >= 50) scoreColor = 'var(--accent-solid)';
+                        else if (score >= 30) scoreColor = 'var(--warning)';
+
+                        const imgHtml = p.image
+                            ? `<img src="${escapeHtml(p.image)}" style="width:40px;height:40px;border-radius:6px;object-fit:cover;">`
+                            : '<span class="text-muted">—</span>';
+                        const cats = (p.categories || []).join(', ') || '—';
+                        const sizes = (p.available_sizes || []).join(', ') || '—';
+                        const linkHtml = p.permalink
+                            ? `<a href="${escapeHtml(p.permalink)}" target="_blank" style="color:var(--accent-solid);text-decoration:none;">Open ↗</a>`
+                            : '—';
+
+                        return `
+                            <tr>
+                                <td><strong style="color:${scoreColor};">${score.toFixed(1)}</strong></td>
+                                <td>${imgHtml}</td>
+                                <td>${escapeHtml(p.name || '?')}</td>
+                                <td>$${parseFloat(p.price || 0).toFixed(2)}</td>
+                                <td><span class="badge badge-info">${escapeHtml(cats)}</span></td>
+                                <td>${escapeHtml(sizes)}</td>
+                                <td>${linkHtml}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                    countEl.textContent = `Showing ${data.results.length} of ${data.total} results for "${escapeHtml(data.query || q)}"`;
+                } else {
+                    tbody.innerHTML = '';
+                    resultsDiv.style.display = 'none';
+                    emptyDiv.style.display = 'block';
+                    emptyDiv.textContent = `No results found for "${q}". Try a different query.`;
+                }
+            } catch (err) {
+                console.error('Fuzzy search failed', err);
+                tbody.innerHTML = '<tr><td colspan="7" class="text-muted">Search failed. Check console.</td></tr>';
+            }
+        };
+
+        const checkFuzzyIndex = async () => {
+            if (!API_KEY) return;
+            const badge = document.getElementById('fuzzy-index-badge');
+            try {
+                const res = await fetch(apiUrl('/api/fuzzy-search?q=test&limit=1'));
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data.status === 'index_not_ready') {
+                    badge.textContent = 'Loading...';
+                    badge.className = 'badge badge-warning';
+                } else {
+                    badge.textContent = 'Ready';
+                    badge.className = 'badge badge-success';
+                }
+            } catch (e) { /* ignore */ }
+        };
+
         const sendBroadcast = async () => {
             if (!API_KEY) {
                 showAuthOverlay();
@@ -707,12 +841,15 @@
         if (API_KEY) {
             hideAuthOverlay();
             fetchStats();
+            checkFuzzyIndex();
         } else {
             showAuthOverlay();
         }
 
         // Refresh every 5 seconds
         setInterval(fetchStats, 5000);
+        // Check fuzzy index status every 30 seconds
+        setInterval(checkFuzzyIndex, 30000);
     </script>
 </body>
 </html>
