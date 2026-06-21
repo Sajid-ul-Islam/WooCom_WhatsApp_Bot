@@ -18,6 +18,7 @@ from woocommerce_client import WooCommerceClient
 from rag_agent import RAGAgent
 from handlers import process_incoming_message, handle_main_menu
 from middleware import is_rate_limited, is_duplicate_message, load_dedup_ids_from_db, MAX_INCOMING_TEXT_LEN
+from wit_client import WitClient
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -127,11 +128,16 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Could not load remote config from Supabase: {e}. Falling back to env vars.")
 
     # Re-initialize ALL clients so they pick up the freshly-loaded keys
+    wit_client = WitClient()
+    if wit_client.configured:
+        logger.info(f"Wit.ai client initialized with server token (starts with: {wit_client._token[:6]}...)")
+
     ctx = BotContext(
         db=db,
         wc=WooCommerceClient(),
         wa=WhatsAppClient(),
         agent=RAGAgent(db_client=db),
+        wit=wit_client,
     )
 
     # --- Verify config ---
@@ -225,6 +231,8 @@ async def lifespan(app: FastAPI):
     # Cleanup HTTP clients on shutdown
     await ctx.wc.close()
     await ctx.wa.close()
+    if ctx.wit:
+        await ctx.wit.close()
     logger.info("WhatsApp WooCommerce Bot is shutting down...")
 
 

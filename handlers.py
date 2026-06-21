@@ -704,6 +704,30 @@ PREFIX_HANDLERS = [
     ("order_cancel_confirm_", lambda ctx, to, order_id: handle_cancel_order_confirm(ctx, to, order_id)),
 ]
 
+
+async def _handle_wit_resume_bot(ctx: BotContext, to: str):
+    """Resume bot for user after human agent handoff."""
+    await ctx.db.set_bot_paused(to, False)
+    await ctx.db.set_user_state(to, "idle")
+    await ctx.wa.send_text_message(to, "✅ Bot resumed. How can I help you?")
+
+
+# Map Wit.ai intent names → async handlers (used inside route_text)
+# Defined at module level so it's built once at import time
+WIT_INTENT_MAP = {
+    "greeting": handle_main_menu,
+    "browse_categories": handle_categories,
+    "view_cart": handle_view_cart,
+    "view_orders": handle_view_orders,
+    "size_help": handle_size_rec_start,
+    "cancel_order": lambda ctx, to: handle_cancel_order_request(ctx, to, ""),
+    "talk_to_human": handle_human_agent,
+    "resume_bot": _handle_wit_resume_bot,
+    "clear_cart": handle_clear_cart,
+    "checkout": handle_checkout_prompt,
+}
+
+
 TEXT_COMMANDS = {
     "/start": handle_main_menu,
     "hi": handle_main_menu,
@@ -791,21 +815,27 @@ async def route_action(ctx: BotContext, to: str, action_id: str) -> bool:
 
 
 async def route_text(ctx: BotContext, to: str, text: str):
-    """Route a text message to the appropriate handler."""
+    """Route a text message to the appropriate handler.
+
+    Priority order:
+    1. Exact keyword match (fastest — no external call)
+    2. Regex pattern match (cancel order, add X, remove X, checkout:)
+    3. Wit.ai intent classification (fast — ~50 ms, free)
+    4. LLM fallback (expensive — only for complex/unrecognised queries)
+    """
     text_lower = text.lower().strip()
 
-    # Exact keyword match
+    # === 1. Exact keyword match ===
     if text_lower in TEXT_COMMANDS:
         await TEXT_COMMANDS[text_lower](ctx, to)
         return
 
-    # Regex: "cancel order 12345"
+    # === 2. Regex pattern match ===
     cancel_match = re.match(r"^cancel\s+order\s+(\d+)", text_lower)
     if cancel_match:
         await handle_cancel_order_request(ctx, to, cancel_match.group(1))
         return
 
-    # Regex: "Add 123"
     add_match = re.match(r"^add\s+(\d+)", text_lower)
     if add_match:
         try:
@@ -817,7 +847,6 @@ async def route_text(ctx: BotContext, to: str, text: str):
             )
         return
 
-    # Regex: "Remove 123"
     remove_match = re.match(r"^remove\s+(\d+)", text_lower)
     if remove_match:
         try:
@@ -829,13 +858,44 @@ async def route_text(ctx: BotContext, to: str, text: str):
             )
         return
 
-    # Legacy checkout command (still supported)
     if text_lower.startswith("checkout:"):
         details_text = text.split(":", 1)[1].strip()
         await handle_process_checkout(ctx, to, details_text)
         return
 
-    # Default: AI search/QA query
+    # === 3. Wit.ai intent classification (fast path) ===
+    if ctx.wit and ctx.wit.configured:
+        wit_result = await ctx.wit.analyze_message(text)
+        if wit_result and wit_result["intents"]:
+            top_intent = wit_result["intents"][0]
+            intent_name = top_intent["name"]
+            confidence = top_intent["confidence"]
+            logger.info(f"Wit.ai classified '{text}' as '{intent_name}' (confidence={confidence:.2f})")
+
+            # Use Wit.ai result if confidence >= 0.6
+            if confidence >= 0.6 and intent_name in WIT_INTENT_MAP:
+                handler = WIT_INTENT_MAP[intent_name]
+                await handler(ctx, to)
+                return
+
+            # For product_search intent or low-confidence intents, extract search entities
+            if intent_name == "product_search" or confidence < 0.6:
+                # Extract product name entities if present
+                entities = wit_result.get("entities", {})
+                product_entity = entities.get("product", [])
+                if product_entity:
+                    # Use the highest-confidence product entity as the search term
+                    best = max(product_entity, key=lambda e: e.get("confidence", 0))
+                    search_text = best.get("value", text)
+                else:
+                    search_text = text
+
+                # Route product_search to AI search
+                if intent_name == "product_search":
+                    await handle_ai_search(ctx, to, search_text)
+                    return
+
+    # === 4. LLM fallback (expensive — complex/unrecognised queries) ===
     await handle_ai_search(ctx, to, text)
 
 

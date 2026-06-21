@@ -5,6 +5,7 @@ from db import DatabaseClient
 from whatsapp_client import WhatsAppClient
 from woocommerce_client import WooCommerceClient
 from rag_agent import RAGAgent
+from wit_client import WitClient
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ class BotContext:
     wa: WhatsAppClient
     wc: WooCommerceClient
     agent: RAGAgent
+    wit: WitClient | None = None
 
     def __post_init__(self):
         """Validate that all clients are properly initialized."""
@@ -29,3 +31,8 @@ class BotContext:
 
         if not self.agent.embedding_model:
             logger.warning("BotContext: RAGAgent embedding model failed to load. AI search quality may be degraded.")
+
+        if self.wit is None or not self.wit.configured:
+            logger.info("BotContext: Wit.ai client not configured — all queries will use LLM fallback.")
+        else:
+            logger.info("BotContext: Wit.ai client configured — known intents will skip LLM for faster responses.")
