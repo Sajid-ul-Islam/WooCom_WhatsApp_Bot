@@ -16,6 +16,7 @@ from context import BotContext
 from whatsapp_client import WhatsAppClient
 from woocommerce_client import WooCommerceClient
 from rag_agent import RAGAgent
+from fuzzy_search import FuzzyProductSearch
 from handlers import process_incoming_message, handle_main_menu
 from middleware import is_rate_limited, is_duplicate_message, load_dedup_ids_from_db, MAX_INCOMING_TEXT_LEN
 from wit_client import WitClient
@@ -132,12 +133,28 @@ async def lifespan(app: FastAPI):
     if wit_client.configured:
         logger.info(f"Wit.ai client initialized with server token (starts with: {wit_client._token[:6]}...)")
 
+    # Initialize fuzzy search index and sync products from WooCommerce
+    # Runs in background so the app starts immediately
+    fuzzy = FuzzyProductSearch()
+    wc_client = WooCommerceClient()
+
+    async def _warm_fuzzy_index():
+        try:
+            indexed = await fuzzy.sync_from_woo(wc_client)
+            logger.info(f"FuzzyProductSearch synced {indexed} products from WooCommerce.")
+        except Exception as e:
+            logger.warning(f"FuzzyProductSearch sync failed (fuzzy search will be unavailable): {e}")
+
+    asyncio.create_task(_warm_fuzzy_index())
+
+    # Reuse the same WooCommerceClient for the bot context (avoids double-init)
     ctx = BotContext(
         db=db,
-        wc=WooCommerceClient(),
+        wc=wc_client,
         wa=WhatsAppClient(),
-        agent=RAGAgent(db_client=db),
+        agent=RAGAgent(db_client=db, fuzzy_search=fuzzy),
         wit=wit_client,
+        fuzzy=fuzzy,
     )
 
     # --- Verify config ---
@@ -532,6 +549,14 @@ async def woo_product_webhook(request: Request):
             logger.info(f"Successfully vectorized and saved product {prod_id} to AI memory.")
         else:
             logger.error(f"Failed to save product {prod_id} to DB.")
+
+        # --- Keep the fuzzy search index in sync ---
+        try:
+            if ctx.fuzzy:
+                ctx.fuzzy.upsert_product(product)
+                logger.debug(f"Fuzzy index updated for product {prod_id}.")
+        except Exception as e:
+            logger.warning(f"Failed to update fuzzy index for product {prod_id}: {e}")
 
         return JSONResponse({"status": "ok"})
     except json.JSONDecodeError:

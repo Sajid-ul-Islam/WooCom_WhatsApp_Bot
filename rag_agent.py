@@ -60,8 +60,9 @@ FALLBACK_PRIORITY = ["openrouter", "groq", "grok", "gemini", "openai", "anthropi
 
 
 class RAGAgent:
-    def __init__(self, db_client=None):
+    def __init__(self, db_client=None, fuzzy_search=None):
         self.db_client = db_client or DatabaseClient()
+        self.fuzzy_search = fuzzy_search
 
         # Load embedding model
         model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
@@ -292,26 +293,58 @@ class RAGAgent:
         query_embedding = self._generate_query_embedding(search_terms)
         context_warning = ""
 
+        # --- Vector search (Supabase embeddings) ---
+        vector_matches = []
         if query_embedding:
-            # Fetch up to 20 for Python-side filtering
             raw_matches = await self.db_client.match_products(query_embedding, threshold=0.3, limit=20)
 
-            # 4. Hybrid Filtering
-            filtered_matches = []
+            # Price filtering on vector results
             for p in raw_matches:
                 price = float(p.get("price") or 0)
                 if max_price is not None and price > max_price:
                     continue
                 if min_price is not None and price < min_price:
                     continue
-                filtered_matches.append(p)
+                vector_matches.append(p)
 
-            # If our filters killed all results, fall back to raw matches to at least show something
-            if not filtered_matches and raw_matches:
-                matching_products = raw_matches[:4]
-                context_warning = f"Note: I could not find exact matches within the budget constraint ({min_price}-{max_price}), but here are the closest alternatives."
-            else:
-                matching_products = filtered_matches[:4]
+        # --- Fuzzy search (local rapidfuzz index) ---
+        fuzzy_matches = []
+        if self.fuzzy_search and self.fuzzy_search.ready:
+            fuzzy_matches = self.fuzzy_search.search(
+                search_terms,
+                max_results=10,
+                min_score=35.0,
+                max_price=max_price,
+                min_price=min_price,
+            )
+            logger.info(f"Fuzzy search returned {len(fuzzy_matches)} matches for '{search_terms}'")
+
+        # --- Hybrid merge: combine vector + fuzzy, dedup by product id, rank by score ---
+        seen_ids = set()
+        merged = []
+
+        # Vector matches get a score of 80+ (they already passed threshold)
+        for p in vector_matches:
+            pid = p.get("id")
+            if pid and pid not in seen_ids:
+                seen_ids.add(pid)
+                merged.append(p)
+
+        # Fuzzy matches ranked by _fuzzy_score
+        for p in fuzzy_matches:
+            pid = p.get("id")
+            if pid and pid not in seen_ids:
+                seen_ids.add(pid)
+                merged.append(p)
+
+        matching_products = merged[:4]
+
+        # If nothing found from either source, warn the user
+        if not matching_products and (vector_matches or fuzzy_matches):
+            matching_products = (vector_matches or fuzzy_matches)[:4]
+            context_warning = f"Note: I could not find exact matches within the budget constraint ({min_price}-{max_price}), but here are the closest alternatives."
+        elif not matching_products:
+            context_warning = ""
 
         # 5. Construct Product Prompt
         system_prompt = (

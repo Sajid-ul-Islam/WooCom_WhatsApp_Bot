@@ -6,6 +6,7 @@ from whatsapp_client import WhatsAppClient
 from woocommerce_client import WooCommerceClient
 from rag_agent import RAGAgent
 from wit_client import WitClient
+from fuzzy_search import FuzzyProductSearch
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ class BotContext:
     wc: WooCommerceClient
     agent: RAGAgent
     wit: WitClient | None = None
+    fuzzy: FuzzyProductSearch | None = None
 
     def __post_init__(self):
         """Validate that all clients are properly initialized."""
@@ -36,3 +38,8 @@ class BotContext:
             logger.info("BotContext: Wit.ai client not configured — all queries will use LLM fallback.")
         else:
             logger.info("BotContext: Wit.ai client configured — known intents will skip LLM for faster responses.")
+
+        if self.fuzzy.ready:
+            logger.info(f"BotContext: FuzzyProductSearch ready with {len(self.fuzzy._products)} products indexed.")
+        else:
+            logger.info("BotContext: FuzzyProductSearch not yet indexed. Will sync on first search.")
