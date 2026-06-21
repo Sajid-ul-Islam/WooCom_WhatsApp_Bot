@@ -61,6 +61,48 @@ create table if not exists public.support_tickets (
     created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+-- Rate limiting table (shared across workers/restarts)
+create table if not exists public.rate_limits (
+    phone_number text not null,
+    window_start timestamp with time zone not null,
+    request_count integer default 1,
+    primary key (phone_number, window_start)
+);
+
+-- Message deduplication table (persistent across restarts)
+create table if not exists public.processed_messages (
+    msg_id text primary key,
+    processed_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Durable pending messages queue (prevents message loss on crash during bg processing)
+create table if not exists public.pending_messages (
+    id uuid primary key default uuid_generate_v4(),
+    msg_id text,
+    phone_number text not null,
+    payload jsonb,
+    status text default 'pending', -- 'pending', 'processing', 'completed', 'failed'
+    error text,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    processed_at timestamp with time zone
+);
+
+-- Index for pending message cleanup
+create index on public.pending_messages (status, created_at);
+
+-- Index for rate limit cleanup
+create index on public.rate_limits (window_start);
+
+-- Index for processed message cleanup
+create index on public.processed_messages (processed_at);
+
+-- Config table for remote secret management
+create table if not exists public.config (
+    key text primary key,
+    value text not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
 -- Vector similarity search helper function
 create or replace function match_products (
   query_embedding vector(384),

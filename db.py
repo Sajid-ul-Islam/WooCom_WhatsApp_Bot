@@ -413,6 +413,239 @@ class DatabaseClient:
             logger.error(f"Error creating support ticket: {e}")
             return None
 
+    # ==================== RATE LIMITING (Supabase-backed) ====================
+
+    async def check_rate_limit(self, phone_number: str, max_requests: int = 5, window_seconds: int = 10) -> bool:
+        """
+        Check if a phone number has exceeded the rate limit.
+        Uses Supabase for persistence across restarts/workers.
+        Returns True if rate limited (should be blocked), False if allowed.
+        """
+        if not self.client:
+            return False
+        phone = normalize_phone(phone_number)
+        try:
+            from datetime import datetime, timezone, timedelta
+            window_start = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+            return await self._check_rate_limit_fallback(phone, window_start, max_requests)
+        except Exception as e:
+            logger.warning(f"Rate limit check failed (falling through): {e}")
+            return False
+
+    async def _check_rate_limit_fallback(self, phone: str, window_start, max_requests: int) -> bool:
+        """Fallback rate limit check using direct table queries."""
+        try:
+            from datetime import datetime, timezone
+            # Count existing requests in the current window
+            response = await self._run_sync(
+                lambda: self.client.table("rate_limits")
+                .select("id", count="exact")
+                .eq("phone_number", phone)
+                .gte("window_start", window_start.isoformat())
+                .execute()
+            )
+            total = response.count if hasattr(response, 'count') and response.count else 0
+            if total >= max_requests:
+                return True
+
+            # Record this request as a NEW row (insert, not upsert)
+            # Using microsecond-precision timestamp ensures uniqueness
+            now = datetime.now(timezone.utc)
+            await self._run_sync(
+                lambda: self.client.table("rate_limits").insert({
+                    "phone_number": phone,
+                    "window_start": now.isoformat(),
+                    "request_count": 1
+                }).execute()
+            )
+            return False
+        except Exception as e:
+            logger.warning(f"Rate limit fallback error: {e}")
+            return False
+
+    async def cleanup_rate_limits(self):
+        """Remove expired rate limit entries (older than 1 hour)."""
+        if not self.client:
+            return
+        try:
+            from datetime import datetime, timezone, timedelta
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+            await self._run_sync(
+                lambda: self.client.table("rate_limits")
+                .lt("window_start", cutoff)
+                .delete()
+                .execute()
+            )
+        except Exception as e:
+            logger.warning(f"Rate limit cleanup error: {e}")
+
+    # ==================== MESSAGE DEDUPLICATION (Supabase-backed) ====================
+
+    async def is_duplicate_message(self, msg_id: str) -> bool:
+        """Check if a message ID has already been processed."""
+        if not self.client or not msg_id:
+            return False
+        try:
+            response = await self._run_sync(
+                lambda: self.client.table("processed_messages")
+                .select("msg_id")
+                .eq("msg_id", msg_id)
+                .execute()
+            )
+            return len(response.data) > 0
+        except Exception as e:
+            logger.warning(f"Dedup check failed: {e}")
+            return False
+
+    async def mark_message_processed(self, msg_id: str):
+        """Mark a message as processed to prevent future duplicates."""
+        if not self.client or not msg_id:
+            return
+        try:
+            from datetime import datetime, timezone
+            await self._run_sync(
+                lambda: self.client.table("processed_messages")
+                .upsert({"msg_id": msg_id, "processed_at": datetime.now(timezone.utc).isoformat()})
+                .execute()
+            )
+        except Exception as e:
+            logger.warning(f"Failed to mark message processed: {e}")
+
+    async def cleanup_processed_messages(self):
+        """Remove processed message entries older than 1 hour (dedup window is 5 min)."""
+        if not self.client:
+            return
+        try:
+            from datetime import datetime, timezone, timedelta
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+            await self._run_sync(
+                lambda: self.client.table("processed_messages")
+                .lt("processed_at", cutoff)
+                .delete()
+                .execute()
+            )
+        except Exception as e:
+            logger.warning(f"Processed messages cleanup error: {e}")
+
+    async def load_recent_processed_ids(self) -> set:
+        """Load recently processed message IDs into memory on startup."""
+        if not self.client:
+            return set()
+        try:
+            from datetime import datetime, timezone, timedelta
+            cutoff = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+            response = await self._run_sync(
+                lambda: self.client.table("processed_messages")
+                .select("msg_id")
+                .gte("processed_at", cutoff)
+                .execute()
+            )
+            return {row["msg_id"] for row in (response.data or [])}
+        except Exception as e:
+            logger.warning(f"Failed to load recent processed IDs: {e}")
+            return set()
+
+    # ==================== PENDING MESSAGES (Durable Queue) ====================
+
+    async def create_pending_message(self, msg_id: str, phone_number: str, payload: dict) -> str | None:
+        """Create a pending message record for durable processing."""
+        if not self.client:
+            return None
+        phone = normalize_phone(phone_number)
+        try:
+            response = await self._run_sync(
+                lambda: self.client.table("pending_messages")
+                .insert({
+                    "msg_id": msg_id,
+                    "phone_number": phone,
+                    "payload": payload,
+                    "status": "pending"
+                })
+                .execute()
+            )
+            if response.data:
+                return response.data[0].get("id")
+            return None
+        except Exception as e:
+            logger.error(f"Error creating pending message: {e}")
+            return None
+
+    async def mark_pending_completed(self, pending_id: str, error: str = None):
+        """Mark a pending message as completed or failed."""
+        if not self.client or not pending_id:
+            return
+        try:
+            from datetime import datetime, timezone
+            update = {
+                "status": "failed" if error else "completed",
+                "processed_at": datetime.now(timezone.utc).isoformat()
+            }
+            if error:
+                update["error"] = error[:500]
+            await self._run_sync(
+                lambda: self.client.table("pending_messages")
+                .update(update)
+                .eq("id", pending_id)
+                .execute()
+            )
+        except Exception as e:
+            logger.error(f"Error marking pending message: {e}")
+
+    async def get_unprocessed_pending_messages(self) -> list:
+        """Get pending messages that need processing (recovery on startup)."""
+        if not self.client:
+            return []
+        try:
+            from datetime import datetime, timezone, timedelta
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+            response = await self._run_sync(
+                lambda: self.client.table("pending_messages")
+                .select("*")
+                .in_("status", ["pending", "processing"])
+                .gte("created_at", cutoff)
+                .order("created_at", desc=False)
+                .limit(50)
+                .execute()
+            )
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Error fetching pending messages: {e}")
+            return []
+
+    async def cleanup_old_pending_messages(self):
+        """Remove completed/failed pending messages older than 24 hours."""
+        if not self.client:
+            return
+        try:
+            from datetime import datetime, timezone, timedelta
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            await self._run_sync(
+                lambda: self.client.table("pending_messages")
+                .in_("status", ["completed", "failed"])
+                .lt("processed_at", cutoff)
+                .delete()
+                .execute()
+            )
+        except Exception as e:
+            logger.warning(f"Pending messages cleanup error: {e}")
+
+    async def claim_pending_message(self, pending_id: str) -> bool:
+        """Atomically claim a pending message for processing (prevent double-processing)."""
+        if not self.client:
+            return False
+        try:
+            response = await self._run_sync(
+                lambda: self.client.table("pending_messages")
+                .update({"status": "processing"})
+                .eq("id", pending_id)
+                .eq("status", "pending")
+                .execute()
+            )
+            return len(response.data) > 0
+        except Exception as e:
+            logger.error(f"Error claiming pending message: {e}")
+            return False
+
     # ==================== PRODUCT SYNC ====================
 
     async def upsert_product(self, doc: dict) -> bool:

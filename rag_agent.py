@@ -84,6 +84,20 @@ class RAGAgent:
                     "api_type": reg.get("api_type", "openai"),
                 }
 
+        # Validate configured provider exists in the registry
+        if self.provider and self.provider not in PROVIDER_REGISTRY:
+            logger.warning(
+                f"LLM_PROVIDER is set to '{self.provider}', which is not a known provider. "
+                f"Known providers: {', '.join(PROVIDER_REGISTRY.keys())}. "
+                "The system will fall back to available providers."
+            )
+        if self.provider and self.provider not in self.providers:
+            logger.warning(
+                f"LLM_PROVIDER is '{self.provider}' but no API key is configured for it. "
+                f"Check env var '{PROVIDER_REGISTRY.get(self.provider, {}).get('key_env', '?')}'. "
+                "The system will fall back to available providers."
+            )
+
     def _generate_query_embedding(self, query: str) -> List[float]:
         """Generate vector embedding for user query."""
         if not self.embedding_model:

@@ -21,7 +21,11 @@ logger = logging.getLogger("product_embeddings")
 load_dotenv()
 
 def prepare_product_search_text(product: Dict[str, Any]) -> str:
-    """Create a descriptive text representation of a product for semantic search."""
+    """Create a descriptive text representation of a product for semantic search.
+    
+    The product name is repeated to give it more weight in the embedding,
+    improving search relevance for exact name matches.
+    """
     name = product.get("name", "")
     price = product.get("price", "0.0")
     description = clean_html(product.get("description", "")) or clean_html(product.get("short_description", ""))
@@ -32,7 +36,11 @@ def prepare_product_search_text(product: Dict[str, Any]) -> str:
     tags = [tag.get("name", "") for tag in product.get("tags", [])]
     tags_str = ", ".join(tags)
 
-    return f"Product Name: {name}. Price: ${price}. Categories: {categories_str}. Tags: {tags_str}. Description: {description}"
+    # Repeat product name to increase its weight in the embedding vector
+    # This improves search precision for queries containing product names
+    name_weighted = " ".join([name] * 3)
+    
+    return f"{name_weighted} Product Name: {name}. Price: ${price}. Categories: {categories_str}. Tags: {tags_str}. Description: {description}"
 
 def prepare_product_doc(p: Dict[str, Any]) -> Dict[str, Any]:
     """Map a WooCommerce product to a Supabase row (without embedding)."""

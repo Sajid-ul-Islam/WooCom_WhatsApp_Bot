@@ -1,6 +1,9 @@
 import os
 import json
 import asyncio
+import hmac
+import hashlib
+import base64
 import logging
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
@@ -14,7 +17,7 @@ from whatsapp_client import WhatsAppClient
 from woocommerce_client import WooCommerceClient
 from rag_agent import RAGAgent
 from handlers import process_incoming_message, handle_main_menu
-from middleware import is_rate_limited, is_duplicate_message, MAX_INCOMING_TEXT_LEN
+from middleware import is_rate_limited, is_duplicate_message, load_dedup_ids_from_db, MAX_INCOMING_TEXT_LEN
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -27,6 +30,74 @@ db = DatabaseClient()
 
 # Bot context — initialized during app lifespan with all clients
 ctx: BotContext | None = None
+
+# Graceful shutdown event for background workers
+_shutdown_event = asyncio.Event()
+
+
+# ==================== SECURITY HELPERS ====================
+
+
+def verify_meta_webhook_signature(raw_body: bytes, signature_header: str) -> bool:
+    """
+    Verify Meta's X-Hub-Signature-256 header using the App Secret.
+    If no App Secret is configured, skip verification (fallback mode).
+    """
+    app_secret = os.getenv("WHATSAPP_APP_SECRET", "")
+    if not app_secret:
+        logger.warning("WHATSAPP_APP_SECRET not set — webhook signature verification disabled.")
+        return True
+
+    if not signature_header:
+        logger.error("Missing X-Hub-Signature-256 header.")
+        return False
+
+    expected = "sha256=" + hmac.new(
+        app_secret.encode("utf-8"),
+        raw_body,
+        hashlib.sha256
+    ).hexdigest()
+
+    return hmac.compare_digest(expected, signature_header)
+
+
+def verify_admin_auth(request: Request) -> bool:
+    """Check if the request has a valid admin API key."""
+    admin_key = os.getenv("ADMIN_API_KEY", "")
+    if not admin_key:
+        logger.warning("ADMIN_API_KEY not set — admin endpoints are unprotected.")
+        return True  # No key configured = open access (backward compatible)
+
+    # Check Authorization header first
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return hmac.compare_digest(auth_header[7:], admin_key)
+
+    # Fall back to query parameter
+    query_key = request.query_params.get("api_key", "")
+    return hmac.compare_digest(query_key, admin_key)
+
+
+def verify_woo_webhook(request: Request, raw_body: bytes) -> bool:
+    """Verify WooCommerce webhook signature if a secret is configured.
+    
+    WooCommerce signs webhooks using HMAC-SHA256 with the secret,
+    then base64-encodes the digest and sends it as X-WC-Webhook-Signature.
+    """
+    webhook_secret = os.getenv("WOOCOMMERCE_WEBHOOK_SECRET", "")
+    if not webhook_secret:
+        return True  # No secret configured = accept all
+
+    # WooCommerce sends signature in the X-WC-Webhook-Signature header
+    signature = request.headers.get("X-WC-Webhook-Signature", "")
+    if not signature:
+        logger.error("Missing X-WC-Webhook-Signature header.")
+        return False
+
+    expected = base64.b64encode(
+        hmac.new(webhook_secret.encode("utf-8"), raw_body, hashlib.sha256).digest()
+    ).decode()
+    return hmac.compare_digest(expected, signature)
 
 
 @asynccontextmanager
@@ -79,13 +150,51 @@ async def lifespan(app: FastAPI):
     if not db.client:
         logger.error("Supabase client not initialized. Database and carts will not function.")
 
+    # --- Load dedup IDs from Supabase into memory ---
+    try:
+        recent_ids = await db.load_recent_processed_ids()
+        load_dedup_ids_from_db(recent_ids)
+    except Exception as e:
+        logger.warning(f"Could not load recent processed IDs from Supabase: {e}")
+
+    # --- Reprocess any pending messages from a previous crash ---
+    try:
+        pending = await db.get_unprocessed_pending_messages()
+        if pending:
+            logger.info(f"Found {len(pending)} unprocessed pending messages. Reprocessing...")
+            for msg in pending:
+                claimed = await db.claim_pending_message(msg["id"])
+                if claimed:
+                    payload = msg.get("payload", {})
+                    asyncio.create_task(
+                        process_incoming_message(
+                            ctx=ctx,
+                            from_number=payload.get("from_number", ""),
+                            message=payload.get("message", {}),
+                            value=payload.get("value", {}),
+                            action_id=payload.get("action_id", ""),
+                            incoming_text=payload.get("incoming_text", ""),
+                            pending_id=msg["id"]
+                        )
+                    )
+    except Exception as e:
+        logger.warning(f"Could not reprocess pending messages: {e}")
+
+    # Reset shutdown event
+    _shutdown_event.clear()
+
     # --- Start Abandoned Cart Worker ---
     async def abandoned_cart_worker():
         while True:
             try:
-                # Run every 1 hour (3600 seconds)
-                await asyncio.sleep(3600)
-                
+                # Wait 1 hour, or until shutdown is requested
+                try:
+                    await asyncio.wait_for(_shutdown_event.wait(), timeout=3600)
+                    logger.info("Abandoned cart worker shutting down gracefully...")
+                    return
+                except asyncio.TimeoutError:
+                    pass  # Normal timeout, run the check
+
                 cohorts = [
                     (1, "🛒 *You left items in your cart!*\n\nComplete your order today to enjoy fast delivery. Reply with *Cart* to view your items!"),
                     (24, "🛒 *Friendly Reminder!*\n\nYour cart is still waiting for you. Would you like to complete your order?\n\nReply with *Cart* to view your items, or browse more to add others!"),
@@ -99,6 +208,9 @@ async def lifespan(app: FastAPI):
                         if phone:
                             await ctx.wa.send_text_message(phone, msg)
                             await asyncio.sleep(1)  # Prevent rate limiting
+            except asyncio.CancelledError:
+                logger.info("Abandoned cart worker cancelled. Exiting...")
+                return
             except Exception as e:
                 logger.error(f"Abandoned cart worker error: {e}")
 
@@ -106,6 +218,9 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(abandoned_cart_worker())
 
     yield
+
+    # Signal shutdown to background workers
+    _shutdown_event.set()
 
     # Cleanup HTTP clients on shutdown
     await ctx.wc.close()
@@ -123,8 +238,10 @@ async def health_check():
 
 
 @app.get("/api/dashboard-stats")
-async def api_dashboard_stats():
+async def api_dashboard_stats(request: Request):
     """Returns real-time dashboard statistics from Supabase."""
+    if not verify_admin_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized. Provide a valid API key via ?api_key= or Authorization: Bearer header.")
     stats = await db.get_dashboard_stats()
     return JSONResponse(content=stats)
 
@@ -145,8 +262,11 @@ class BroadcastRequest(BaseModel):
 
 
 @app.post("/api/broadcast")
-async def broadcast_message(req: BroadcastRequest):
+async def broadcast_message(request: Request, req: BroadcastRequest):
     """Sends a promotional message to all active users."""
+    if not verify_admin_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized. Provide a valid API key via ?api_key= or Authorization: Bearer header.")
+
     users = await db.get_all_active_users()
     if not users:
         return JSONResponse({"status": "error", "message": "No users found."})
@@ -159,9 +279,10 @@ async def broadcast_message(req: BroadcastRequest):
         try:
             await ctx.wa.send_text_message(phone, req.message)
             count += 1
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1.5)  # Increased delay to respect Meta API rate limits
         except Exception as e:
             logger.error(f"Broadcast failed for {phone}: {e}")
+            await asyncio.sleep(2)  # Back off on errors
 
     return JSONResponse({"status": "ok", "message": f"Broadcast sent to {count} users."})
 
@@ -191,15 +312,27 @@ async def verify_webhook(request: Request):
 
 @app.post("/webhook")
 async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
-    """Meta webhook POST receiver endpoint."""
+    """Meta webhook POST receiver endpoint with signature verification."""
+    # Read raw body for signature verification before JSON parsing
+    raw_body = await request.body()
+
+    # Verify webhook signature
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    if not verify_meta_webhook_signature(raw_body, signature):
+        logger.error("Webhook signature verification failed. Possible spoofing attempt.")
+        raise HTTPException(status_code=403, detail="Invalid webhook signature")
+
     try:
-        body = await request.json()
-    except Exception as e:
+        body = json.loads(raw_body)
+    except json.JSONDecodeError as e:
         logger.error(f"Failed to parse incoming JSON: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    except Exception as e:
+        logger.error(f"Unexpected error parsing webhook: {e}")
+        raise HTTPException(status_code=400, detail="Invalid payload")
 
     # Log incoming webhook JSON for debugging
-    logger.debug(f"Webhook received: {json.dumps(body)}")
+    logger.debug(f"Webhook received: {json.dumps(body)[:500]}")
 
     # Check for statuses update (sent, delivered, read) to ignore
     entry = body.get("entry", [{}])[0]
@@ -214,13 +347,27 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
     from_number = message["from"]
 
     msg_id = message.get("id")
+
+    # --- Check duplicate (in-memory fast path) ---
     if msg_id and is_duplicate_message(msg_id):
         logger.info(f"Duplicate message detected: {msg_id}. Ignoring.")
         return JSONResponse({"status": "ignored", "reason": "duplicate"})
 
+    # --- Also check Supabase for cross-restart dedup ---
+    if msg_id:
+        try:
+            is_dup = await db.is_duplicate_message(msg_id)
+            if is_dup:
+                logger.info(f"Supabase dedup hit for {msg_id}. Ignoring.")
+                return JSONResponse({"status": "ignored", "reason": "duplicate_persistent"})
+            # Write to Supabase asynchronously (don't wait for the response)
+            asyncio.create_task(db.mark_message_processed(msg_id))
+        except Exception as e:
+            logger.warning(f"Supabase dedup check failed for {msg_id}: {e}")
+
     msg_type = message.get("type")
 
-    # --- Rate Limiting ---
+    # --- Rate Limiting (in-memory fast path) ---
     if is_rate_limited(from_number):
         logger.warning(f"Rate limited: {from_number}")
         return JSONResponse({"status": "rate_limited"})
@@ -251,6 +398,23 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         logger.info(f"Unsupported message type '{msg_type}' from {from_number}")
         return JSONResponse({"status": "unsupported_type"})
 
+    # --- Create durable pending message (prevents message loss if server crashes during bg processing) ---
+    try:
+        pending_id = await db.create_pending_message(
+            msg_id=msg_id,
+            phone_number=from_number,
+            payload={
+                "from_number": from_number,
+                "message": message,
+                "value": value,
+                "action_id": action_id,
+                "incoming_text": incoming_text
+            }
+        )
+    except Exception as e:
+        logger.warning(f"Failed to create pending message for {msg_id}: {e}")
+        pending_id = None
+
     # Schedule message processing in the background to respond 200 OK immediately to Meta
     background_tasks.add_task(
         process_incoming_message,
@@ -259,7 +423,8 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         message=message,
         value=value,
         action_id=action_id,
-        incoming_text=incoming_text
+        incoming_text=incoming_text,
+        pending_id=pending_id
     )
 
     return JSONResponse({"status": "ok"})
@@ -268,9 +433,16 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
 @app.post("/woo-webhook")
 async def woo_webhook(request: Request):
     """Webhook to receive order updates from WooCommerce and notify users via WhatsApp."""
+    raw_body = await request.body()
+
+    # Verify WooCommerce webhook signature
+    if not verify_woo_webhook(request, raw_body):
+        logger.error("WooCommerce webhook signature verification failed.")
+        raise HTTPException(status_code=403, detail="Invalid webhook signature")
+
     try:
-        body = await request.json()
-        logger.info(f"WooCommerce webhook received: {body.get('id')}")
+        body = json.loads(raw_body)
+        logger.info(f"WooCommerce order webhook received. Order ID: {body.get('id')}")
 
         status = body.get("status")
         billing = body.get("billing", {})
@@ -282,16 +454,26 @@ async def woo_webhook(request: Request):
             await ctx.wa.send_text_message(phone, message)
 
         return JSONResponse({"status": "ok"})
+    except json.JSONDecodeError:
+        logger.error("Invalid JSON in WooCommerce webhook")
+        return JSONResponse({"status": "error", "detail": "Invalid JSON"})
     except Exception as e:
-        logger.error(f"Error processing woo webhook: {e}")
+        logger.error(f"Error processing WooCommerce order webhook: {e}")
         return JSONResponse({"status": "error"})
 
 
 @app.post("/woo-product-webhook")
 async def woo_product_webhook(request: Request):
     """Webhook to receive new/updated products from WooCommerce and embed them in real-time."""
+    raw_body = await request.body()
+
+    # Verify WooCommerce webhook signature
+    if not verify_woo_webhook(request, raw_body):
+        logger.error("WooCommerce product webhook signature verification failed.")
+        raise HTTPException(status_code=403, detail="Invalid webhook signature")
+
     try:
-        product = await request.json()
+        product = json.loads(raw_body)
         logger.info(f"Received WooCommerce product webhook for ID: {product.get('id')}")
 
         if not product.get("id") or not product.get("name"):
@@ -331,6 +513,9 @@ async def woo_product_webhook(request: Request):
             logger.error(f"Failed to save product {prod_id} to DB.")
 
         return JSONResponse({"status": "ok"})
+    except json.JSONDecodeError:
+        logger.error("Invalid JSON in WooCommerce product webhook")
+        return JSONResponse({"status": "error", "detail": "Invalid JSON"})
     except Exception as e:
         logger.error(f"Error processing product webhook: {e}", exc_info=True)
         return JSONResponse({"status": "error"})

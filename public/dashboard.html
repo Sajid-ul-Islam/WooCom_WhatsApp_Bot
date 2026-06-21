@@ -6,6 +6,79 @@
     <title>WooCom WhatsApp Bot Admin Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
+        .auth-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--bg-color);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .auth-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 4px 30px rgba(0,0,0,0.1);
+        }
+
+        .auth-card h2 {
+            margin-bottom: 0.5rem;
+            font-size: 1.5rem;
+        }
+
+        .auth-card p {
+            color: var(--text-secondary);
+            margin-bottom: 1.5rem;
+            font-size: 0.875rem;
+        }
+
+        .auth-input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: rgba(0,0,0,0.2);
+            border: 1px solid var(--card-border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 1rem;
+            margin-bottom: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .auth-input:focus {
+            border-color: var(--accent-solid);
+        }
+
+        .auth-btn {
+            width: 100%;
+            padding: 0.75rem;
+            background: var(--accent-solid);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .auth-btn:hover {
+            opacity: 0.9;
+        }
+
+        .auth-error {
+            color: var(--warning);
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
+            display: none;
+        }
         :root {
             --bg-color: #0b0f19;
             --card-bg: rgba(255, 255, 255, 0.03);
@@ -233,6 +306,17 @@
     </style>
 </head>
 <body>
+    <!-- Auth Overlay -->
+    <div class="auth-overlay" id="auth-overlay">
+        <div class="auth-card">
+            <h2>🔐 Admin Authentication</h2>
+            <p>Enter your admin API key to access the dashboard.</p>
+            <input type="password" id="api-key-input" class="auth-input" placeholder="Enter your API key..." autocomplete="off">
+            <button class="auth-btn" onclick="submitApiKey()">Unlock Dashboard</button>
+            <div class="auth-error" id="auth-error">Invalid API key. Please try again.</div>
+        </div>
+    </div>
+
     <div class="bg-glow-1"></div>
     <div class="bg-glow-2"></div>
 
@@ -315,6 +399,63 @@
     </div>
 
     <script>
+        // ---- API Key Auth ----
+        let API_KEY = sessionStorage.getItem('dashboard_api_key') || '';
+
+        const showAuthOverlay = () => {
+            document.getElementById('auth-overlay').style.display = 'flex';
+        };
+
+        const hideAuthOverlay = () => {
+            document.getElementById('auth-overlay').style.display = 'none';
+        };
+
+        const submitApiKey = () => {
+            const key = document.getElementById('api-key-input').value.trim();
+            if (!key) {
+                document.getElementById('auth-error').style.display = 'block';
+                return;
+            }
+            // Test the key by making a request
+            fetch(`/api/dashboard-stats?api_key=${encodeURIComponent(key)}`)
+                .then(res => {
+                    if (res.status === 401) {
+                        document.getElementById('auth-error').style.display = 'block';
+                        document.getElementById('auth-error').textContent = 'Invalid API key. Please try again.';
+                        throw new Error('Unauthorized');
+                    }
+                    if (!res.ok) throw new Error('Server error');
+                    return res.json();
+                })
+                .then(data => {
+                    API_KEY = key;
+                    sessionStorage.setItem('dashboard_api_key', key);
+                    hideAuthOverlay();
+                    renderDashboard(data);
+                })
+                .catch(err => {
+                    if (err.message !== 'Unauthorized') {
+                        document.getElementById('auth-error').style.display = 'block';
+                        document.getElementById('auth-error').textContent = 'Could not connect to server.';
+                    }
+                });
+        };
+
+        // Allow Enter key to submit
+        document.addEventListener('DOMContentLoaded', () => {
+            const input = document.getElementById('api-key-input');
+            if (input) {
+                input.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') submitApiKey();
+                });
+            }
+        });
+
+        const apiUrl = (path) => {
+            const sep = path.includes('?') ? '&' : '?';
+            return `${path}${sep}api_key=${encodeURIComponent(API_KEY)}`;
+        };
+
         const formatTimeAgo = (dateString) => {
             if (!dateString) return 'N/A';
             const date = new Date(dateString);
@@ -329,62 +470,74 @@
             return `${Math.floor(diffHrs / 24)}d ago`;
         };
 
+        const renderDashboard = (data) => {
+            // Update Overview Stats
+            document.getElementById('val-users-count').innerText = data.users_count || 0;
+            document.getElementById('val-carts-count').innerText = data.carts_count || 0;
+
+            // Render Users Table
+            const usersTbody = document.getElementById('users-tbody');
+            if (data.users && data.users.length > 0) {
+                usersTbody.innerHTML = data.users.map(u => {
+                    const botBadge = u.bot_paused 
+                        ? '<span class="badge badge-warning">Paused</span>' 
+                        : '<span class="badge badge-success">Active</span>';
+                    const stateBadge = `<span class="badge badge-info">${u.state || 'idle'}</span>`;
+                    
+                    return `
+                        <tr>
+                            <td>${u.phone_number}</td>
+                            <td>${u.first_name || 'Customer'}</td>
+                            <td>${stateBadge}</td>
+                            <td>${botBadge}</td>
+                            <td>${formatTimeAgo(u.last_active)}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } else {
+                usersTbody.innerHTML = '<tr><td colspan="5" class="text-muted">No recent users found.</td></tr>';
+            }
+
+            // Render Orders Table
+            const ordersTbody = document.getElementById('orders-tbody');
+            if (data.orders && data.orders.length > 0) {
+                ordersTbody.innerHTML = data.orders.map(o => {
+                    let statusClass = 'badge-info';
+                    if (o.status === 'completed' || o.status === 'processing') statusClass = 'badge-success';
+                    if (o.status === 'cancelled' || o.status === 'failed') statusClass = 'badge-warning';
+                    
+                    return `
+                        <tr>
+                            <td>#${o.id}</td>
+                            <td>${o.phone_number}</td>
+                            <td><span class="badge ${statusClass}">${o.status}</span></td>
+                            <td>$${parseFloat(o.total).toFixed(2)}</td>
+                            <td>${formatTimeAgo(o.created_at)}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } else {
+                ordersTbody.innerHTML = '<tr><td colspan="5" class="text-muted">No recent orders found.</td></tr>';
+            }
+        };
+
         const fetchStats = async () => {
+            if (!API_KEY) {
+                showAuthOverlay();
+                return;
+            }
             const loader = document.getElementById('loader');
             loader.style.display = 'inline-block';
             try {
-                const response = await fetch('/api/dashboard-stats');
+                const response = await fetch(apiUrl('/api/dashboard-stats'));
+                if (response.status === 401) {
+                    sessionStorage.removeItem('dashboard_api_key');
+                    API_KEY = '';
+                    showAuthOverlay();
+                    return;
+                }
                 const data = await response.json();
-                
-                // Update Overview Stats
-                document.getElementById('val-users-count').innerText = data.users_count || 0;
-                document.getElementById('val-carts-count').innerText = data.carts_count || 0;
-
-                // Render Users Table
-                const usersTbody = document.getElementById('users-tbody');
-                if (data.users && data.users.length > 0) {
-                    usersTbody.innerHTML = data.users.map(u => {
-                        const botBadge = u.bot_paused 
-                            ? '<span class="badge badge-warning">Paused</span>' 
-                            : '<span class="badge badge-success">Active</span>';
-                        const stateBadge = `<span class="badge badge-info">${u.state || 'idle'}</span>`;
-                        
-                        return `
-                            <tr>
-                                <td>${u.phone_number}</td>
-                                <td>${u.first_name || 'Customer'}</td>
-                                <td>${stateBadge}</td>
-                                <td>${botBadge}</td>
-                                <td>${formatTimeAgo(u.last_active)}</td>
-                            </tr>
-                        `;
-                    }).join('');
-                } else {
-                    usersTbody.innerHTML = '<tr><td colspan="5" class="text-muted">No recent users found.</td></tr>';
-                }
-
-                // Render Orders Table
-                const ordersTbody = document.getElementById('orders-tbody');
-                if (data.orders && data.orders.length > 0) {
-                    ordersTbody.innerHTML = data.orders.map(o => {
-                        let statusClass = 'badge-info';
-                        if (o.status === 'completed' || o.status === 'processing') statusClass = 'badge-success';
-                        if (o.status === 'cancelled' || o.status === 'failed') statusClass = 'badge-warning';
-                        
-                        return `
-                            <tr>
-                                <td>#${o.id}</td>
-                                <td>${o.phone_number}</td>
-                                <td><span class="badge ${statusClass}">${o.status}</span></td>
-                                <td>$${parseFloat(o.total).toFixed(2)}</td>
-                                <td>${formatTimeAgo(o.created_at)}</td>
-                            </tr>
-                        `;
-                    }).join('');
-                } else {
-                    ordersTbody.innerHTML = '<tr><td colspan="5" class="text-muted">No recent orders found.</td></tr>';
-                }
-
+                renderDashboard(data);
             } catch (err) {
                 console.error('Failed to fetch dashboard stats', err);
             } finally {
@@ -393,6 +546,10 @@
         };
 
         const sendBroadcast = async () => {
+            if (!API_KEY) {
+                showAuthOverlay();
+                return;
+            }
             const msg = document.getElementById('broadcast-msg').value;
             const status = document.getElementById('broadcast-status');
             if (!msg.trim()) {
@@ -404,11 +561,20 @@
             status.style.color = "var(--text-secondary)";
             
             try {
-                const res = await fetch('/api/broadcast', {
+                const res = await fetch(apiUrl('/api/broadcast'), {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${API_KEY}`
+                    },
                     body: JSON.stringify({ message: msg })
                 });
+                if (res.status === 401) {
+                    sessionStorage.removeItem('dashboard_api_key');
+                    API_KEY = '';
+                    showAuthOverlay();
+                    return;
+                }
                 const data = await res.json();
                 if (data.status === 'ok') {
                     status.innerText = "✅ " + data.message;
@@ -424,8 +590,13 @@
             }
         };
 
-        // Initial fetch
-        fetchStats();
+        // Check if we have a stored API key
+        if (API_KEY) {
+            hideAuthOverlay();
+            fetchStats();
+        } else {
+            showAuthOverlay();
+        }
 
         // Refresh every 5 seconds
         setInterval(fetchStats, 5000);

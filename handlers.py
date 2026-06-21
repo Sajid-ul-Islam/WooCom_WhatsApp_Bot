@@ -1,5 +1,6 @@
 import os
 import re
+import asyncio
 import logging
 
 from context import BotContext
@@ -385,7 +386,7 @@ async def handle_process_checkout(ctx: BotContext, to: str, text: str):
         address = parts[1].strip()
         if not name or not address:
             raise ValueError()
-    except Exception:
+    except (ValueError, IndexError):
         await ctx.wa.send_text_message(
             to,
             "⚠️ Invalid format.\n\nPlease reply like this:\n*Name, Full Address*\n\nOr type *cancel* to go back."
@@ -809,7 +810,8 @@ async def route_text(ctx: BotContext, to: str, text: str):
     if add_match:
         try:
             await handle_add_to_cart(ctx, to, int(add_match.group(1)))
-        except Exception:
+        except (ValueError, KeyError) as e:
+            logger.warning(f"Add to cart error for {to}: {e}")
             await ctx.wa.send_text_message(
                 to, "To add a product, please type *Add [Product ID]* (e.g. *Add 105*)."
             )
@@ -820,7 +822,8 @@ async def route_text(ctx: BotContext, to: str, text: str):
     if remove_match:
         try:
             await handle_remove_from_cart(ctx, to, int(remove_match.group(1)))
-        except Exception:
+        except (ValueError, KeyError) as e:
+            logger.warning(f"Remove from cart error for {to}: {e}")
             await ctx.wa.send_text_message(
                 to, "To remove an item, type *Remove [Product ID]* (e.g. *Remove 105*)."
             )
@@ -841,9 +844,13 @@ async def route_text(ctx: BotContext, to: str, text: str):
 
 async def process_incoming_message(
     ctx: BotContext, from_number: str, message: dict,
-    value: dict, action_id: str, incoming_text: str
+    value: dict, action_id: str, incoming_text: str,
+    pending_id: str | None = None
 ):
-    """Processes WhatsApp message in the background to avoid blocking response to Meta."""
+    """Processes WhatsApp message in the background to avoid blocking response to Meta.
+    
+    If pending_id is provided, it will be marked as completed/failed after processing.
+    """
     try:
         # Upsert user on every message
         contact_name = None
@@ -917,10 +924,17 @@ async def process_incoming_message(
             logger.info(f"Processing text message from {from_number}")
             await route_text(ctx, from_number, incoming_text)
 
+        # Mark pending message as completed
+        if pending_id:
+            asyncio.create_task(ctx.db.mark_pending_completed(pending_id))
+
     except Exception as e:
         logger.error(f"Error handling WhatsApp message: {e}", exc_info=True)
+        # Mark pending message as failed
+        if pending_id:
+            asyncio.create_task(ctx.db.mark_pending_completed(pending_id, error=str(e)[:500]))
         try:
             await ctx.wa.send_text_message(from_number, "Sorry, I had trouble processing that action. Returning to main menu.")
             await handle_main_menu(ctx, from_number)
-        except Exception:
-            pass
+        except Exception as send_err:
+            logger.error(f"Failed to send error message to {from_number}: {send_err}")
