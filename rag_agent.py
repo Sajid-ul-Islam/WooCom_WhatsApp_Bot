@@ -250,6 +250,22 @@ class RAGAgent:
                 "sentiment": "neutral"
             }
 
+    def _get_fallback_context(self) -> str:
+        """Returns a string of categories or popular items to use when no products match."""
+        if not self.fuzzy_search or not self.fuzzy_search.ready:
+            return ""
+            
+        cats = set()
+        pop_products = []
+        for pid, p in list(self.fuzzy_search._products.items())[:15]:
+            pop_products.append(p.get("name"))
+            for c in p.get("categories", []):
+                cats.add(c.get("name"))
+        
+        cat_str = ", ".join(list(cats)[:10])
+        pop_str = ", ".join(pop_products[:3])
+        return f"\n\nDynamic Store Context:\n- Available Categories: {cat_str}\n- Some Popular Items: {pop_str}\nIf they want these, tell them to type the name!"
+
     async def answer_query(self, query: str, history: list = None, orders: list = None) -> Dict[str, Any]:
         """
         Processes user query dynamically.
@@ -393,6 +409,7 @@ class RAGAgent:
                 context_str += f"- ID: {p.get('id')}\n  Name: {p.get('name')}\n  Price: ${p.get('price')}\n  Description: {desc}\n  Link: {p.get('permalink')}\n\n"
         else:
             context_str += "No products matched this specific search directly. Recommend browsing categories or searching general terms."
+            context_str += self._get_fallback_context()
 
         user_prompt = f"Context:\n{context_str}\n\nUser Query: {query}\n\nProvide your sales assistant response:"
 

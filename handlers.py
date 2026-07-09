@@ -154,7 +154,7 @@ async def handle_category_products(ctx: BotContext, to: str, category_id: int):
 
 
 async def handle_product_detail(ctx: BotContext, to: str, product_id: int):
-    """Sends product details, including pricing, description, and image.
+    """Sends product details dynamically, extracting precise pricing, stock, and metadata.
     Detects if product has variations (e.g. sizes) and adjusts buttons accordingly."""
     product = await ctx.wc.get_product(product_id)
     if not product:
@@ -162,19 +162,53 @@ async def handle_product_detail(ctx: BotContext, to: str, product_id: int):
         return
 
     name = product.get("name")
-    price = f"${product.get('price')}" if product.get("price") else "Price on request"
     permalink = product.get("permalink", "")
+    
+    # 1. Precise Pricing
+    regular_price = product.get("regular_price")
+    sale_price = product.get("sale_price")
+    price_val = product.get("price")
+    
+    if sale_price and regular_price and float(sale_price) < float(regular_price):
+        price_display = f"~${regular_price}~ *${sale_price}* (Sale!)"
+    elif price_val:
+        price_display = f"*${price_val}*"
+    else:
+        price_display = "Price on request"
 
-    desc_raw = product.get("description") or product.get("short_description") or "No description available."
-    description = clean_html(desc_raw)
-    if len(description) > 300:
-        description = description[:297] + "..."
+    # 2. Stock Status
+    stock_status = product.get("stock_status", "instock")
+    if stock_status == "instock":
+        stock_display = "✅ In Stock"
+        qty = product.get("stock_quantity")
+        if qty:
+            stock_display += f" ({qty} available)"
+    elif stock_status == "outofstock":
+        stock_display = "❌ Out of Stock"
+    else:
+        stock_display = "⏳ On Backorder"
+        
+    # 3. Categories & Rating
+    cats = product.get("categories", [])
+    cat_names = ", ".join(c.get("name", "") for c in cats) if cats else "General"
+    
+    rating = product.get("average_rating", "0.0")
+    rating_display = f"⭐ {rating}/5.0" if float(rating) > 0 else "No reviews yet"
+
+    # 4. Clean Description
+    desc_raw = product.get("short_description") or product.get("description") or "No description available."
+    description = clean_html(desc_raw).strip()
+    if len(description) > 200:
+        description = description[:197] + "..."
 
     caption = (
         f"*{name}*\n"
-        f"Price: *{price}*\n\n"
-        f"{description}\n\n"
-        f"Link: {permalink}"
+        f"🏷️ Category: {cat_names}\n"
+        f"{rating_display}\n\n"
+        f"Price: {price_display}\n"
+        f"Status: {stock_display}\n\n"
+        f"📝 *Details:*\n{description}\n\n"
+        f"🔗 Link: {permalink}"
     )
 
     images = product.get("images", [])
@@ -698,7 +732,42 @@ async def handle_human_agent(ctx: BotContext, to: str):
 
 
 async def handle_ai_search(ctx: BotContext, to: str, query: str):
-    """Passes user text query to the RAG Agent and returns LLM and matching products."""
+    """Passes user text query to the RAG Agent and returns LLM and matching products.
+    Uses a fast-path fuzzy match to bypass LLM for exact or very close matches."""
+    
+    # === Fast Path: Direct Fuzzy Match ===
+    if ctx.fuzzy and ctx.fuzzy.ready:
+        fuzzy_matches = ctx.fuzzy.search(query, max_results=5, min_score=60.0)
+        if fuzzy_matches:
+            top_match = fuzzy_matches[0]
+            top_score = top_match.get("_fuzzy_score", 0.0)
+            
+            # Excellent match -> Bypass AI and show product directly
+            if top_score >= 85.0:
+                await handle_product_detail(ctx, to, top_match["id"])
+                return
+                
+            # Good match -> Show list of products directly
+            if top_score >= 65.0:
+                rows = []
+                for p in fuzzy_matches:
+                    price_text = f"${p.get('price')}" if p.get("price") else "Price on request"
+                    rows.append({
+                        "id": f"prod_{p['id']}",
+                        "title": p.get("name", "")[:24],
+                        "description": f"{price_text} - View details"[:72]
+                    })
+                sections = [{"title": "Matching Products", "rows": rows}]
+                await ctx.wa.send_list_message(
+                    to=to,
+                    button_text="View Matches",
+                    body_text="I found these items based on your search:",
+                    sections=sections,
+                    header_text="Search Results"
+                )
+                return
+
+    # === Fallback: AI Search ===
     await ctx.wa.send_text_message(to, "🔍 Searching the catalog, please wait...")
 
     history = await ctx.db.get_user_history(to)
