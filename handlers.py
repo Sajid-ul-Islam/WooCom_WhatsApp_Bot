@@ -26,7 +26,8 @@ async def handle_main_menu(ctx: BotContext, to: str):
 
     # 1. Shopping Section
     shopping_rows = [
-        {"id": "menu_categories", "title": "🛍️ Shop by Category", "description": "Explore our collections and special offers"}
+        {"id": "menu_categories", "title": "🛍️ Shop by Category", "description": "Explore our collections and special offers"},
+        {"id": "menu_recommend", "title": "✨ Recommended for You", "description": "Products selected just for you based on your history"}
     ]
     
     if cart_items > 0:
@@ -823,6 +824,31 @@ async def handle_ai_search(ctx: BotContext, to: str, query: str):
         await ctx.wa.send_reply_buttons(to, "What would you like to do?", buttons)
 
 
+async def handle_recommend_for_you(ctx: BotContext, to: str):
+    """Sends personalized recommendations to the user based on their past orders."""
+    orders = await ctx.db.get_cached_orders(to)
+    if not orders:
+        await ctx.wa.send_text_message(to, "I don't have enough purchase history to make personalized recommendations yet. 😅 But here are some of our most popular items!")
+        await handle_ai_search(ctx, to, "Please show me your most popular products and top categories.")
+        return
+
+    history_desc = []
+    for o in orders[:5]:
+        for item in o.get("items", []):
+            history_desc.append(item.get("name"))
+            
+    if not history_desc:
+        await ctx.wa.send_text_message(to, "I couldn't find items in your past orders. Here are some popular products!")
+        await handle_ai_search(ctx, to, "Please show me your most popular products.")
+        return
+
+    purchased = ", ".join(set(history_desc))
+    await ctx.wa.send_text_message(to, f"Based on your past purchases of:\n_{purchased}_\n\nLet me find some great recommendations for you... 🔍")
+    
+    # Trigger AI search for recommendations
+    prompt = f"I previously bought {purchased}. What other products from your store would you recommend for me?"
+    await handle_ai_search(ctx, to, prompt)
+
 # ==================== DISPATCH TABLES ====================
 
 ACTION_HANDLERS = {
@@ -834,6 +860,7 @@ ACTION_HANDLERS = {
     "cart_checkout": handle_checkout_prompt,
     "cart_clear": handle_clear_cart,
     "menu_size": handle_size_rec_start,
+    "menu_recommend": handle_recommend_for_you,
     "menu_cancel_order": lambda ctx, to: handle_cancel_order_request(ctx, to, ""),
 }
 
