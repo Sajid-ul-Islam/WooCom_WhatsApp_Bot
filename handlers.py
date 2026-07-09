@@ -13,33 +13,71 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_main_menu(ctx: BotContext, to: str):
-    """Sends the main menu options using a List Message (supports up to 10 options)."""
+    """Sends a dynamic, modern main menu based on user state."""
+    # Fetch dynamic user state (cart items)
+    cart = await ctx.db.get_cart(to)
+    cart_items = sum(item.get("quantity", 1) for item in cart)
+
     text = (
         "Assalamu Alaikum! 👋\n\n"
-        "Welcome to DEEN Commerce! 🏪 How can I help you today?\n\n"
-        "Please select an option from the menu below, ask me a question about our products, "
-        "or search for items directly."
+        "Welcome to *DEEN Commerce!* 🏪\n\n"
+        "I'm your AI shopping assistant. You can chat with me naturally to search for products, or tap the menu below to explore! ✨"
     )
 
-    sections = [{
-        "title": "Main Menu Options",
-        "rows": [
-            {"id": "menu_categories", "title": "🛍️ Browse Categories", "description": "Explore our store's catalog"},
-            {"id": "menu_cart", "title": "🛒 View Cart", "description": "Check your selected items"},
-            {"id": "menu_orders", "title": "📦 My Orders", "description": "Track your past purchases"},
-            {"id": "menu_size", "title": "📏 Size Assistant", "description": "Find your perfect size"},
-            {"id": "menu_cancel_order", "title": "❌ Cancel Order", "description": "Cancel a pending order"},
-            {"id": "cart_clear", "title": "🗑️ Clear Cart", "description": "Empty your shopping cart"},
-            {"id": "menu_human", "title": "🧑‍💻 Talk to Human", "description": "Pause the AI and talk to staff"}
-        ]
-    }]
+    # 1. Shopping Section
+    shopping_rows = [
+        {"id": "menu_categories", "title": "🛍️ Shop by Category", "description": "Explore our collections and special offers"}
+    ]
+    
+    if cart_items > 0:
+        shopping_rows.append({
+            "id": "menu_cart", 
+            "title": f"🛒 View Cart ({cart_items})", 
+            "description": "You have items waiting! Ready to checkout?"
+        })
+    else:
+        shopping_rows.append({
+            "id": "menu_cart", 
+            "title": "🛒 My Cart", 
+            "description": "Your cart is currently empty"
+        })
+        
+    shopping_rows.append({
+        "id": "menu_size", 
+        "title": "📏 Size Assistant", 
+        "description": "Find your perfect fit instantly"
+    })
+
+    # 2. Account Section
+    account_rows = [
+        {"id": "menu_orders", "title": "📦 Track Orders", "description": "View your recent purchases and status"}
+    ]
+    
+    # 3. Support & Settings Section
+    support_rows = [
+        {"id": "menu_cancel_order", "title": "❌ Cancel Order", "description": "Request a cancellation for a recent order"},
+        {"id": "menu_human", "title": "🧑‍💻 Talk to Staff", "description": "Pause the AI and chat with a real human"}
+    ]
+    
+    if cart_items > 0:
+        support_rows.append({
+            "id": "cart_clear", 
+            "title": "🗑️ Clear Cart", 
+            "description": "Empty all items from your cart"
+        })
+
+    sections = [
+        {"title": "🛍️ Store", "rows": shopping_rows},
+        {"title": "👤 Account", "rows": account_rows},
+        {"title": "📞 Support", "rows": support_rows}
+    ]
 
     await ctx.wa.send_list_message(
         to=to,
-        button_text="Tap for Options",
+        button_text="☰ Open Menu",
         body_text=text,
         sections=sections,
-        header_text="Main Menu"
+        header_text="DEEN Commerce"
     )
 
 
