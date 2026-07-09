@@ -44,21 +44,40 @@ async def handle_main_menu(ctx: BotContext, to: str):
 
 
 async def handle_categories(ctx: BotContext, to: str):
-    """Sends product categories to the user as a List Message."""
+    """Sends product categories to the user as a List Message, split into Promos and Regular."""
     categories = await ctx.wc.get_categories()
     if not categories:
         await ctx.wa.send_text_message(to, "Sorry, I couldn't load store categories right now.")
         return
 
-    rows = []
-    for cat in categories[:10]:
-        rows.append({
-            "id": f"cat_{cat['id']}",
-            "title": cat["name"],
-            "description": f"View products in {cat['name']}"
-        })
+    promo_keywords = ["sale", "new", "off", "bogo", "discount", "%", "offer", "clearance"]
+    promo_rows = []
+    regular_rows = []
 
-    sections = [{"title": "Store Categories", "rows": rows}]
+    for cat in categories:
+        name_lower = cat["name"].lower()
+        is_promo = any(kw in name_lower for kw in promo_keywords)
+        
+        row = {
+            "id": f"cat_{cat['id']}",
+            "title": cat["name"][:24],
+            "description": f"View products in {cat['name']}"[:72]
+        }
+        
+        if is_promo:
+            promo_rows.append(row)
+        else:
+            regular_rows.append(row)
+
+    # WhatsApp allows max 10 rows total across all sections
+    final_promo = promo_rows[:4]
+    final_regular = regular_rows[:(10 - len(final_promo))]
+
+    sections = []
+    if final_promo:
+        sections.append({"title": "🔥 Special Offers", "rows": final_promo})
+    if final_regular:
+        sections.append({"title": "🛍️ Regular Categories", "rows": final_regular})
 
     await ctx.wa.send_list_message(
         to=to,
