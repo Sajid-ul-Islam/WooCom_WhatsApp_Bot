@@ -18,7 +18,7 @@ from woocommerce_client import WooCommerceClient
 from rag_agent import RAGAgent
 from fuzzy_search import FuzzyProductSearch
 from handlers import process_incoming_message, handle_main_menu
-from middleware import is_rate_limited, is_duplicate_message, load_dedup_ids_from_db, MAX_INCOMING_TEXT_LEN
+from middleware import is_duplicate_message, load_dedup_ids_from_db, MAX_INCOMING_TEXT_LEN
 from wit_client import WitClient
 
 # Setup logging
@@ -108,6 +108,9 @@ async def lifespan(app: FastAPI):
     global ctx  # noqa: PLW0603
 
     logger.info("DEEN Commerce WhatsApp Bot is starting up...")
+
+    # Connect to async Supabase
+    await db.connect()
 
     # --- Load secrets from Supabase config table ---
     try:
@@ -461,8 +464,8 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
 
     msg_type = message.get("type")
 
-    # --- Rate Limiting (in-memory fast path) ---
-    if is_rate_limited(from_number):
+    # --- Rate Limiting (Supabase-backed) ---
+    if await ctx.db.check_rate_limit(from_number):
         logger.warning(f"Rate limited: {from_number}")
         return JSONResponse({"status": "rate_limited"})
 

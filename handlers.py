@@ -447,6 +447,7 @@ async def handle_place_order(ctx: BotContext, to: str, name: str, address: str):
         await ctx.wa.send_text_message(to, "❌ Failed to place order in our system. Please try again later.")
         return
 
+    await ctx.wc.create_order_note(order.get('id'), "Order placed by customer via WhatsApp Bot.")
     await ctx.db.cache_orders([order], to)
     await ctx.db.clear_cart(to)
 

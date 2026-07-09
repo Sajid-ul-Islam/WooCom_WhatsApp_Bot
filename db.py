@@ -3,7 +3,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 import json
-from supabase import create_client, Client
+from supabase import create_async_client, AsyncClient
 
 from utils import normalize_phone
 
@@ -14,11 +14,14 @@ class DatabaseClient:
     def __init__(self):
         self.url = os.getenv("SUPABASE_URL")
         self.key = os.getenv("SUPABASE_KEY")
-        self.client: Client | None = None
-        
+        self.client: AsyncClient | None = None
+
+    async def connect(self):
+        if self.client is not None:
+            return
         if self.url and self.key:
             try:
-                self.client = create_client(self.url, self.key)
+                self.client = await create_async_client(self.url, self.key)
                 logger.info("✅ Supabase connected successfully for WhatsApp bot")
             except Exception as e:
                 logger.error(f"Failed to connect to Supabase: {e}")
@@ -27,10 +30,6 @@ class DatabaseClient:
 
     # ==================== HELPERS ====================
 
-    def _run_sync(self, fn):
-        """Run a synchronous Supabase call in a thread so we don't block the event loop."""
-        return asyncio.to_thread(fn)
-
     # ==================== CART MANAGEMENT ====================
 
     async def get_cart(self, phone_number: str) -> list:
@@ -38,9 +37,7 @@ class DatabaseClient:
             return []
         phone = normalize_phone(phone_number)
         try:
-            response = await self._run_sync(
-                lambda: self.client.table("carts").select("items").eq("phone_number", phone).execute()
-            )
+            response = await self.client.table("carts").select("items").eq("phone_number", phone).execute()
             if response.data:
                 return response.data[0].get("items", [])
             return []
@@ -77,13 +74,11 @@ class DatabaseClient:
             cart.append(item)
             
         try:
-            await self._run_sync(
-                lambda: self.client.table("carts").upsert({
+            await (self.client.table("carts").upsert({
                     "phone_number": phone,
                     "items": cart,
                     "updated_at": datetime.now(timezone.utc).isoformat()
-                }).execute()
-            )
+                }).execute())
         except Exception as e:
             logger.error(f"Error updating cart for {phone}: {e}")
             
@@ -97,13 +92,11 @@ class DatabaseClient:
         updated_cart = [item for item in cart if item["product_id"] != product_id]
         
         try:
-            await self._run_sync(
-                lambda: self.client.table("carts").upsert({
+            await (self.client.table("carts").upsert({
                     "phone_number": phone,
                     "items": updated_cart,
                     "updated_at": datetime.now(timezone.utc).isoformat()
-                }).execute()
-            )
+                }).execute())
         except Exception as e:
             logger.error(f"Error removing from cart for {phone}: {e}")
 
@@ -112,13 +105,11 @@ class DatabaseClient:
             return
         phone = normalize_phone(phone_number)
         try:
-            await self._run_sync(
-                lambda: self.client.table("carts").upsert({
+            await (self.client.table("carts").upsert({
                     "phone_number": phone,
                     "items": [],
                     "updated_at": datetime.now(timezone.utc).isoformat()
-                }).execute()
-            )
+                }).execute())
         except Exception as e:
             logger.error(f"Error clearing cart for {phone}: {e}")
 
@@ -140,9 +131,7 @@ class DatabaseClient:
                     "items": o.get("line_items", []),
                     "created_at": o.get("date_created", datetime.now(timezone.utc).isoformat())
                 })
-            await self._run_sync(
-                lambda: self.client.table("orders").upsert(rows).execute()
-            )
+            await self.client.table("orders").upsert(rows).execute()
         except Exception as e:
             logger.error(f"Error caching orders: {e}")
 
@@ -151,9 +140,7 @@ class DatabaseClient:
             return []
         phone = normalize_phone(phone_number)
         try:
-            response = await self._run_sync(
-                lambda: self.client.table("orders").select("*").eq("phone_number", phone).order("created_at", desc=True).execute()
-            )
+            response = await self.client.table("orders").select("*").eq("phone_number", phone).order("created_at", desc=True).execute()
             return response.data or []
         except Exception as e:
             logger.error(f"Error fetching cached orders: {e}")
@@ -165,12 +152,10 @@ class DatabaseClient:
         if not self.client:
             return []
         try:
-            response = await self._run_sync(
-                lambda: self.client.rpc(
+            response = await (self.client.rpc(
                     "match_products",
                     {"query_embedding": query_embedding, "match_threshold": threshold, "match_count": limit}
-                ).execute()
-            )
+                ).execute())
             return response.data or []
         except Exception as e:
             logger.error(f"Error matching products vector: {e}")
@@ -189,9 +174,7 @@ class DatabaseClient:
                 "first_name": first_name or "Customer",
                 "last_active": datetime.now(timezone.utc).isoformat()
             }
-            await self._run_sync(
-                lambda: self.client.table("whatsapp_users").upsert(data).execute()
-            )
+            await self.client.table("whatsapp_users").upsert(data).execute()
         except Exception as e:
             logger.error(f"Error upserting user {phone}: {e}")
 
@@ -201,9 +184,7 @@ class DatabaseClient:
             return []
         phone = normalize_phone(phone_number)
         try:
-            response = await self._run_sync(
-                lambda: self.client.table("whatsapp_users").select("chat_history").eq("phone_number", phone).execute()
-            )
+            response = await self.client.table("whatsapp_users").select("chat_history").eq("phone_number", phone).execute()
             if response.data and len(response.data) > 0:
                 history = response.data[0].get("chat_history", [])
                 return history if isinstance(history, list) else []
@@ -217,9 +198,7 @@ class DatabaseClient:
             return
         phone = normalize_phone(phone_number)
         try:
-            await self._run_sync(
-                lambda: self.client.table("whatsapp_users").update({"chat_history": history}).eq("phone_number", phone).execute()
-            )
+            await self.client.table("whatsapp_users").update({"chat_history": history}).eq("phone_number", phone).execute()
         except Exception as e:
             logger.error(f"Error updating history for {phone}: {e}")
 
@@ -231,9 +210,7 @@ class DatabaseClient:
         try:
             # Ensure user exists first
             await self.upsert_user(phone)
-            await self._run_sync(
-                lambda: self.client.table("whatsapp_users").update({"bot_paused": is_paused}).eq("phone_number", phone).execute()
-            )
+            await self.client.table("whatsapp_users").update({"bot_paused": is_paused}).eq("phone_number", phone).execute()
         except Exception as e:
             logger.error(f"Error setting bot_paused for {phone}: {e}")
             
@@ -243,9 +220,7 @@ class DatabaseClient:
             return False
         phone = normalize_phone(phone_number)
         try:
-            response = await self._run_sync(
-                lambda: self.client.table("whatsapp_users").select("bot_paused").eq("phone_number", phone).execute()
-            )
+            response = await self.client.table("whatsapp_users").select("bot_paused").eq("phone_number", phone).execute()
             if response.data and len(response.data) > 0:
                 return response.data[0].get("bot_paused", False)
         except Exception as e:
@@ -260,9 +235,7 @@ class DatabaseClient:
             return "idle"
         phone = normalize_phone(phone_number)
         try:
-            response = await self._run_sync(
-                lambda: self.client.table("whatsapp_users").select("state").eq("phone_number", phone).execute()
-            )
+            response = await self.client.table("whatsapp_users").select("state").eq("phone_number", phone).execute()
             if response.data and len(response.data) > 0:
                 return response.data[0].get("state") or "idle"
         except Exception as e:
@@ -275,9 +248,7 @@ class DatabaseClient:
             return
         phone = normalize_phone(phone_number)
         try:
-            await self._run_sync(
-                lambda: self.client.table("whatsapp_users").update({"state": state}).eq("phone_number", phone).execute()
-            )
+            await self.client.table("whatsapp_users").update({"state": state}).eq("phone_number", phone).execute()
         except Exception as e:
             logger.error(f"Error setting user state for {phone}: {e}")
 
@@ -292,9 +263,7 @@ class DatabaseClient:
         if not self.client:
             return {}
         try:
-            response = await self._run_sync(
-                lambda: self.client.table("config").select("key, value").execute()
-            )
+            response = await self.client.table("config").select("key, value").execute()
             if response.data:
                 return {row["key"]: row["value"] for row in response.data}
             return {}
@@ -306,9 +275,7 @@ class DatabaseClient:
         """Fetch carts that have been inactive for exactly 'hours' to 'hours+1' to prevent spam."""
         if not self.client: return []
         try:
-            res = await self._run_sync(
-                lambda: self.client.table("carts").select("*").execute()
-            )
+            res = await self.client.table("carts").select("*").execute()
             if not res.data: return []
             
             from datetime import datetime, timezone, timedelta
@@ -334,9 +301,7 @@ class DatabaseClient:
         """Fetch all WhatsApp users."""
         if not self.client: return []
         try:
-            res = await self._run_sync(
-                lambda: self.client.table("whatsapp_users").select("phone_number").limit(1000).execute()
-            )
+            res = await self.client.table("whatsapp_users").select("phone_number").limit(1000).execute()
             return [u["phone_number"] for u in (res.data or [])]
         except Exception as e:
             logger.error(f"Error fetching active users: {e}")
@@ -358,27 +323,19 @@ class DatabaseClient:
         
         try:
             # Get users
-            users_res = await self._run_sync(
-                lambda: self.client.table("whatsapp_users").select("phone_number, first_name, state, bot_paused, last_active").order("last_active", desc=True).limit(10).execute()
-            )
+            users_res = await self.client.table("whatsapp_users").select("phone_number, first_name, state, bot_paused, last_active").order("last_active", desc=True).limit(10).execute()
             stats["users"] = users_res.data or []
             
             # Total users
-            users_count_res = await self._run_sync(
-                lambda: self.client.table("whatsapp_users").select("phone_number", count="exact").execute()
-            )
+            users_count_res = await self.client.table("whatsapp_users").select("phone_number", count="exact").execute()
             stats["users_count"] = users_count_res.count or 0
             
             # Get recent orders
-            orders_res = await self._run_sync(
-                lambda: self.client.table("orders").select("id, phone_number, status, total, created_at").order("created_at", desc=True).limit(5).execute()
-            )
+            orders_res = await self.client.table("orders").select("id, phone_number, status, total, created_at").order("created_at", desc=True).limit(5).execute()
             stats["orders"] = orders_res.data or []
             
             # Active carts count
-            carts_res = await self._run_sync(
-                lambda: self.client.table("carts").select("items").execute()
-            )
+            carts_res = await self.client.table("carts").select("items").execute()
             if carts_res.data:
                 stats["carts_count"] = sum(1 for c in carts_res.data if c.get("items"))
                 
@@ -403,9 +360,7 @@ class DatabaseClient:
             "priority": priority,
         }
         try:
-            response = await self._run_sync(
-                lambda: self.client.table("support_tickets").insert(data).execute()
-            )
+            response = await self.client.table("support_tickets").insert(data).execute()
             if response.data:
                 return response.data[0]
             return None
@@ -437,13 +392,11 @@ class DatabaseClient:
         try:
             from datetime import datetime, timezone
             # Count existing requests in the current window
-            response = await self._run_sync(
-                lambda: self.client.table("rate_limits")
+            response = await (self.client.table("rate_limits")
                 .select("id", count="exact")
                 .eq("phone_number", phone)
                 .gte("window_start", window_start.isoformat())
-                .execute()
-            )
+                .execute())
             total = response.count if hasattr(response, 'count') and response.count else 0
             if total >= max_requests:
                 return True
@@ -451,13 +404,11 @@ class DatabaseClient:
             # Record this request as a NEW row (insert, not upsert)
             # Using microsecond-precision timestamp ensures uniqueness
             now = datetime.now(timezone.utc)
-            await self._run_sync(
-                lambda: self.client.table("rate_limits").insert({
+            await (self.client.table("rate_limits").insert({
                     "phone_number": phone,
                     "window_start": now.isoformat(),
                     "request_count": 1
-                }).execute()
-            )
+                }).execute())
             return False
         except Exception as e:
             logger.warning(f"Rate limit fallback error: {e}")
@@ -470,12 +421,10 @@ class DatabaseClient:
         try:
             from datetime import datetime, timezone, timedelta
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-            await self._run_sync(
-                lambda: self.client.table("rate_limits")
+            await (self.client.table("rate_limits")
                 .lt("window_start", cutoff)
                 .delete()
-                .execute()
-            )
+                .execute())
         except Exception as e:
             logger.warning(f"Rate limit cleanup error: {e}")
 
@@ -486,12 +435,10 @@ class DatabaseClient:
         if not self.client or not msg_id:
             return False
         try:
-            response = await self._run_sync(
-                lambda: self.client.table("processed_messages")
+            response = await (self.client.table("processed_messages")
                 .select("msg_id")
                 .eq("msg_id", msg_id)
-                .execute()
-            )
+                .execute())
             return len(response.data) > 0
         except Exception as e:
             logger.warning(f"Dedup check failed: {e}")
@@ -503,11 +450,9 @@ class DatabaseClient:
             return
         try:
             from datetime import datetime, timezone
-            await self._run_sync(
-                lambda: self.client.table("processed_messages")
+            await (self.client.table("processed_messages")
                 .upsert({"msg_id": msg_id, "processed_at": datetime.now(timezone.utc).isoformat()})
-                .execute()
-            )
+                .execute())
         except Exception as e:
             logger.warning(f"Failed to mark message processed: {e}")
 
@@ -518,12 +463,10 @@ class DatabaseClient:
         try:
             from datetime import datetime, timezone, timedelta
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-            await self._run_sync(
-                lambda: self.client.table("processed_messages")
+            await (self.client.table("processed_messages")
                 .lt("processed_at", cutoff)
                 .delete()
-                .execute()
-            )
+                .execute())
         except Exception as e:
             logger.warning(f"Processed messages cleanup error: {e}")
 
@@ -534,12 +477,10 @@ class DatabaseClient:
         try:
             from datetime import datetime, timezone, timedelta
             cutoff = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
-            response = await self._run_sync(
-                lambda: self.client.table("processed_messages")
+            response = await (self.client.table("processed_messages")
                 .select("msg_id")
                 .gte("processed_at", cutoff)
-                .execute()
-            )
+                .execute())
             return {row["msg_id"] for row in (response.data or [])}
         except Exception as e:
             logger.warning(f"Failed to load recent processed IDs: {e}")
@@ -553,16 +494,14 @@ class DatabaseClient:
             return None
         phone = normalize_phone(phone_number)
         try:
-            response = await self._run_sync(
-                lambda: self.client.table("pending_messages")
+            response = await (self.client.table("pending_messages")
                 .insert({
                     "msg_id": msg_id,
                     "phone_number": phone,
                     "payload": payload,
                     "status": "pending"
                 })
-                .execute()
-            )
+                .execute())
             if response.data:
                 return response.data[0].get("id")
             return None
@@ -582,12 +521,10 @@ class DatabaseClient:
             }
             if error:
                 update["error"] = error[:500]
-            await self._run_sync(
-                lambda: self.client.table("pending_messages")
+            await (self.client.table("pending_messages")
                 .update(update)
                 .eq("id", pending_id)
-                .execute()
-            )
+                .execute())
         except Exception as e:
             logger.error(f"Error marking pending message: {e}")
 
@@ -598,15 +535,13 @@ class DatabaseClient:
         try:
             from datetime import datetime, timezone, timedelta
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-            response = await self._run_sync(
-                lambda: self.client.table("pending_messages")
+            response = await (self.client.table("pending_messages")
                 .select("*")
                 .in_("status", ["pending", "processing"])
                 .gte("created_at", cutoff)
                 .order("created_at", desc=False)
                 .limit(50)
-                .execute()
-            )
+                .execute())
             return response.data or []
         except Exception as e:
             logger.error(f"Error fetching pending messages: {e}")
@@ -619,13 +554,11 @@ class DatabaseClient:
         try:
             from datetime import datetime, timezone, timedelta
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-            await self._run_sync(
-                lambda: self.client.table("pending_messages")
+            await (self.client.table("pending_messages")
                 .in_("status", ["completed", "failed"])
                 .lt("processed_at", cutoff)
                 .delete()
-                .execute()
-            )
+                .execute())
         except Exception as e:
             logger.warning(f"Pending messages cleanup error: {e}")
 
@@ -634,13 +567,11 @@ class DatabaseClient:
         if not self.client:
             return False
         try:
-            response = await self._run_sync(
-                lambda: self.client.table("pending_messages")
+            response = await (self.client.table("pending_messages")
                 .update({"status": "processing"})
                 .eq("id", pending_id)
                 .eq("status", "pending")
-                .execute()
-            )
+                .execute())
             return len(response.data) > 0
         except Exception as e:
             logger.error(f"Error claiming pending message: {e}")
@@ -653,9 +584,7 @@ class DatabaseClient:
         if not self.client:
             return False
         try:
-            await self._run_sync(
-                lambda: self.client.table("products").upsert(doc).execute()
-            )
+            await self.client.table("products").upsert(doc).execute()
             return True
         except Exception as e:
             logger.error(f"Error upserting product {doc.get('id')}: {e}")
