@@ -244,27 +244,43 @@ async def handle_show_variations(ctx: BotContext, to: str, product_id: int):
 
 
 async def handle_size_chart(ctx: BotContext, to: str, product_id: int):
-    """Shows the sizing guide/chart based on the CRM guidelines."""
-    size_guide = (
-        "📏 *Size Guide*\n\n"
-        "*Panjabis & Shirts:*\n"
-        "• S (Small): Height 5'2\"-5'5\", Weight 50-60 kg (Chest: 38\")\n"
-        "• M (Medium): Height 5'5\"-5'7\", Weight 60-70 kg (Chest: 40\")\n"
-        "• L (Large): Height 5'7\"-5'10\", Weight 70-80 kg (Chest: 42\")\n"
-        "• XL (XL): Height 5'10\"-6'0\", Weight 80-90 kg (Chest: 44\")\n"
-        "• XXL (2XL): Height 6'0\"+, Weight 90+ kg (Chest: 46\")\n\n"
-        "*Delivery:*\n"
-        "• Inside Dhaka: 80 BDT, 2-3 days\n"
-        "• Outside Dhaka: 150 BDT, 3-5 days\n"
-        "• Cash on Delivery (COD) available nationwide.\n\n"
-        "Need a personal recommendation? Use the *Size Assistant* from the main menu!"
-    )
+    """Shows the sizing guide/chart by extracting an image from the product description."""
+    product = await ctx.wc.get_product(product_id)
+    image_url = None
+
+    if product:
+        # Search for an image in the description or short description
+        html_content = product.get("description", "") + " " + product.get("short_description", "")
+        import re
+        match = re.search(r'<img\s+[^>]*src=["\']([^"\']+)["\']', html_content, re.IGNORECASE)
+        if match:
+            image_url = match.group(1)
 
     buttons = [
         {"id": f"size_sel_{product_id}", "title": "📏 Select Size"},
         {"id": "menu_main", "title": "🏠 Main Menu"}
     ]
-    await ctx.wa.send_reply_buttons(to, size_guide, buttons)
+
+    if image_url:
+        await ctx.wa.send_image_message(to, image_url, caption="📏 *Size Chart*")
+        await ctx.wa.send_reply_buttons(to, "Would you like to select a size?", buttons)
+    else:
+        # Fallback to default size guide if no image is found
+        size_guide = (
+            "📏 *Size Guide*\n\n"
+            "*Panjabis & Shirts:*\n"
+            "• S (Small): Height 5'2\"-5'5\", Weight 50-60 kg (Chest: 38\")\n"
+            "• M (Medium): Height 5'5\"-5'7\", Weight 60-70 kg (Chest: 40\")\n"
+            "• L (Large): Height 5'7\"-5'10\", Weight 70-80 kg (Chest: 42\")\n"
+            "• XL (XL): Height 5'10\"-6'0\", Weight 80-90 kg (Chest: 44\")\n"
+            "• XXL (2XL): Height 6'0\"+, Weight 90+ kg (Chest: 46\")\n\n"
+            "*Delivery:*\n"
+            "• Inside Dhaka: 80 BDT, 2-3 days\n"
+            "• Outside Dhaka: 150 BDT, 3-5 days\n"
+            "• Cash on Delivery (COD) available nationwide.\n\n"
+            "Need a personal recommendation? Use the *Size Assistant* from the main menu!"
+        )
+        await ctx.wa.send_reply_buttons(to, size_guide, buttons)
 
 
 async def handle_add_variation_to_cart(ctx: BotContext, to: str, product_id: int, variation_id: int):
