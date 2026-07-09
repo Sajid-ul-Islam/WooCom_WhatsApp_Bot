@@ -16,7 +16,7 @@ async def handle_main_menu(ctx: BotContext, to: str):
     """Sends the main menu options using a List Message (supports up to 10 options)."""
     text = (
         "Assalamu Alaikum! 👋\n\n"
-        "Welcome to our WooCommerce Store! How can I help you today?\n\n"
+        "Welcome to DEEN Commerce! 🏪 How can I help you today?\n\n"
         "Please select an option from the menu below, ask me a question about our products, "
         "or search for items directly."
     )

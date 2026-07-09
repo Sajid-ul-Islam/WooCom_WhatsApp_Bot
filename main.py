@@ -107,7 +107,7 @@ async def lifespan(app: FastAPI):
     """Lifecycle events: load secrets from Supabase, verify config, warm up clients."""
     global ctx  # noqa: PLW0603
 
-    logger.info("WhatsApp WooCommerce Bot is starting up...")
+    logger.info("DEEN Commerce WhatsApp Bot is starting up...")
 
     # --- Load secrets from Supabase config table ---
     try:
@@ -276,7 +276,7 @@ async def lifespan(app: FastAPI):
     await ctx.wa.close()
     if ctx.wit:
         await ctx.wit.close()
-    logger.info("WhatsApp WooCommerce Bot is shutting down...")
+    logger.info("DEEN Commerce WhatsApp Bot is shutting down...")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -285,7 +285,7 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/")
 async def health_check():
     """Root health check — confirms the app is running."""
-    return {"status": "ok", "service": "WooCom WhatsApp Bot"}
+    return {"status": "ok", "service": "DEEN Commerce WhatsApp Bot"}
 
 
 @app.get("/api/dashboard-stats")
