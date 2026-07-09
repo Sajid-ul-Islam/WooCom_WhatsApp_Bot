@@ -178,6 +178,30 @@ class DatabaseClient:
         except Exception as e:
             logger.error(f"Error upserting user {phone}: {e}")
 
+    async def get_user_language(self, phone_number: str) -> str:
+        """Get the user's preferred language."""
+        if not self.client:
+            return "en"
+        phone = normalize_phone(phone_number)
+        try:
+            response = await self.client.table("whatsapp_users").select("language").eq("phone_number", phone).execute()
+            if response.data and len(response.data) > 0:
+                return response.data[0].get("language", "en")
+        except Exception as e:
+            logger.error(f"Error getting language for {phone}: {e}")
+        return "en"
+
+    async def set_user_language(self, phone_number: str, language: str):
+        """Set the user's preferred language."""
+        if not self.client:
+            return
+        phone = normalize_phone(phone_number)
+        try:
+            await self.upsert_user(phone)
+            await self.client.table("whatsapp_users").update({"language": language}).eq("phone_number", phone).execute()
+        except Exception as e:
+            logger.error(f"Error setting language for {phone}: {e}")
+
     async def get_user_history(self, phone_number: str) -> list:
         """Get conversation history"""
         if not self.client:

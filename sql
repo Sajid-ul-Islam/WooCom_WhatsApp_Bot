@@ -44,6 +44,7 @@ create table if not exists public.whatsapp_users (
     first_name text,
     chat_history jsonb default '[]'::jsonb,
     command_counts jsonb default '{}'::jsonb,
+    language text default 'en',
     bot_paused boolean default false,
     state text default 'idle',
     last_active timestamp with time zone default timezone('utc'::text, now())

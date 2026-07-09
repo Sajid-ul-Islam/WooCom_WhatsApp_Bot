@@ -294,7 +294,7 @@ class RAGAgent:
             if intent == "order_status":
                 system_prompt += "The user is asking about an order. Tell them they can check their order status by clicking the 'My Orders' button in the main menu."
             elif intent == "support":
-                system_prompt += "The user needs support. Tell them they can talk to a human by clicking the 'Talk to Human' button in the main menu."
+                system_prompt += "The user needs support. Tell them they can talk to a human by calling or messaging 01952700500, or by clicking the 'Talk to Staff' button in the main menu."
             elif intent == "small_talk":
                 system_prompt += "The user is making small talk. Be polite, friendly, and ask how you can help them find the perfect product today."
 
@@ -415,7 +415,7 @@ class RAGAgent:
         if matching_products:
             for p in matching_products:
                 desc = p.get("description", "")[:120] + "..." if len(p.get("description", "")) > 120 else p.get("description", "")
-                context_str += f"- ID: {p.get('id')}\n  Name: {p.get('name')}\n  Price: ${p.get('price')}\n  Description: {desc}\n  Link: {p.get('permalink')}\n\n"
+                context_str += f"- ID: {p.get('id')}\n  Name: {p.get('name')}\n  Price: BDT {p.get('price')}\n  Description: {desc}\n  Link: {p.get('permalink')}\n\n"
         else:
             context_str += "No products matched this specific search directly. Recommend browsing categories or searching general terms."
             context_str += self._get_fallback_context()

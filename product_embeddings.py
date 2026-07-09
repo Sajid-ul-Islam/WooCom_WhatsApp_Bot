@@ -40,7 +40,7 @@ def prepare_product_search_text(product: Dict[str, Any]) -> str:
     # This improves search precision for queries containing product names
     name_weighted = " ".join([name] * 3)
     
-    return f"{name_weighted} Product Name: {name}. Price: ${price}. Categories: {categories_str}. Tags: {tags_str}. Description: {description}"
+    return f"{name_weighted} Product Name: {name}. Price: BDT {price}. Categories: {categories_str}. Tags: {tags_str}. Description: {description}"
 
 def prepare_product_doc(p: Dict[str, Any]) -> Dict[str, Any]:
     """Map a WooCommerce product to a Supabase row (without embedding)."""

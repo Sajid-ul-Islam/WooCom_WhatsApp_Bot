@@ -5,6 +5,7 @@ import logging
 
 from context import BotContext
 from utils import clean_html
+from i18n import get_text
 
 logger = logging.getLogger(__name__)
 
@@ -17,53 +18,51 @@ async def handle_main_menu(ctx: BotContext, to: str):
     # Fetch dynamic user state (cart items)
     cart = await ctx.db.get_cart(to)
     cart_items = sum(item.get("quantity", 1) for item in cart)
+    lang = await ctx.db.get_user_language(to)
 
-    text = (
-        "Assalamu Alaikum! 👋\n\n"
-        "Welcome to *DEEN Commerce!* 🏪\n\n"
-        "I'm your AI shopping assistant. You can chat with me naturally to search for products, or tap the menu below to explore! ✨"
-    )
+    text = get_text(lang, "welcome")
 
     # 1. Shopping Section
     shopping_rows = [
-        {"id": "menu_categories", "title": "🛍️ Shop by Category", "description": "Explore our collections and special offers"},
-        {"id": "menu_recommend", "title": "✨ Recommended for You", "description": "Products selected just for you based on your history"}
+        {"id": "menu_categories", "title": get_text(lang, "menu_categories"), "description": "Explore our collections and special offers"},
+        {"id": "menu_recommend", "title": get_text(lang, "menu_recommend"), "description": "Products selected just for you based on your history"}
     ]
     
     if cart_items > 0:
         shopping_rows.append({
             "id": "menu_cart", 
-            "title": f"🛒 View Cart ({cart_items})", 
+            "title": f"🛒 ({cart_items}) {get_text(lang, 'menu_cart')}", 
             "description": "You have items waiting! Ready to checkout?"
         })
     else:
         shopping_rows.append({
             "id": "menu_cart", 
-            "title": "🛒 My Cart", 
+            "title": get_text(lang, "menu_cart"), 
             "description": "Your cart is currently empty"
         })
         
     shopping_rows.append({
         "id": "menu_size", 
-        "title": "📏 Size Assistant", 
+        "title": get_text(lang, "menu_size"), 
         "description": "Find your perfect fit instantly"
     })
 
     # 2. Account Section
     account_rows = [
-        {"id": "menu_orders", "title": "📦 Track Orders", "description": "View your recent purchases and status"}
+        {"id": "menu_orders", "title": get_text(lang, "menu_orders"), "description": "View your recent purchases and status"}
     ]
     
     # 3. Support & Settings Section
     support_rows = [
         {"id": "menu_cancel_order", "title": "❌ Cancel Order", "description": "Request a cancellation for a recent order"},
-        {"id": "menu_human", "title": "🧑‍💻 Talk to Staff", "description": "Pause the AI and chat with a real human"}
+        {"id": "menu_human", "title": get_text(lang, "menu_human"), "description": "Pause the AI and chat with a real human"},
+        {"id": "menu_language", "title": get_text(lang, "menu_language"), "description": "English / বাংলা"}
     ]
     
     if cart_items > 0:
         support_rows.append({
             "id": "cart_clear", 
-            "title": "🗑️ Clear Cart", 
+            "title": get_text(lang, "cart_clear"), 
             "description": "Empty all items from your cart"
         })
 
@@ -83,45 +82,67 @@ async def handle_main_menu(ctx: BotContext, to: str):
 
 
 async def handle_categories(ctx: BotContext, to: str):
-    """Sends product categories to the user as a List Message, split into Promos and Regular."""
-    categories = await ctx.wc.get_categories()
-    if not categories:
+    """Sends product categories to the user as a List Message, split into Promos, Men's, and Others."""
+    # Fetch top-level categories (for promos and others) and MEN's subcategories (for regular items)
+    top_categories = await ctx.wc.get_categories(parent=0)
+    men_categories = await ctx.wc.get_categories(parent=508)
+    
+    if not top_categories and not men_categories:
         await ctx.wa.send_text_message(to, "Sorry, I couldn't load store categories right now.")
         return
 
-    promo_keywords = ["sale", "new", "off", "bogo", "discount", "%", "offer", "clearance"]
+    promo_keywords = ["sale", "new", "off", "bogo", "discount", "%", "offer", "clearance", "bundle", "value"]
     promo_rows = []
-    regular_rows = []
+    mens_rows = []
+    other_rows = []
 
-    for cat in categories:
+    # Extract promos and other top-level categories
+    for cat in top_categories:
+        if cat["name"].lower() == "uncategorized":
+            continue
         name_lower = cat["name"].lower()
         is_promo = any(kw in name_lower for kw in promo_keywords)
-        
-        row = {
+        if is_promo:
+            promo_rows.append({
+                "id": f"cat_{cat['id']}",
+                "title": cat["name"][:24],
+                "description": f"View products in {cat['name']}"[:72]
+            })
+        elif cat["id"] != 508:  # Skip MEN top level since we show its subcategories
+            other_rows.append({
+                "id": f"cat_{cat['id']}",
+                "title": cat["name"][:24],
+                "description": f"View products in {cat['name']}"[:72]
+            })
+
+    # Extract regular categories from MEN (id: 508)
+    for cat in men_categories:
+        mens_rows.append({
             "id": f"cat_{cat['id']}",
             "title": cat["name"][:24],
             "description": f"View products in {cat['name']}"[:72]
-        }
-        
-        if is_promo:
-            promo_rows.append(row)
-        else:
-            regular_rows.append(row)
+        })
 
     # WhatsApp allows max 10 rows total across all sections
-    final_promo = promo_rows[:4]
-    final_regular = regular_rows[:(10 - len(final_promo))]
+    final_promo = promo_rows[:3]
+    final_mens = mens_rows[:4]
+    final_other = other_rows[:(10 - len(final_promo) - len(final_mens))]
 
     sections = []
     if final_promo:
         sections.append({"title": "🔥 Special Offers", "rows": final_promo})
-    if final_regular:
-        sections.append({"title": "🛍️ Regular Categories", "rows": final_regular})
+    if final_mens:
+        sections.append({"title": "🛍️ Men's Collection", "rows": final_mens})
+    if final_other:
+        sections.append({"title": "✨ Other Categories", "rows": final_other})
 
+    lang = await ctx.db.get_user_language(to)
+    from i18n import get_text
+    
     await ctx.wa.send_list_message(
         to=to,
-        button_text="Select Category",
-        body_text="Choose a category from the list below to view products:",
+        button_text=get_text(lang, "categories_btn"),
+        body_text=get_text(lang, "categories_body"),
         sections=sections,
         header_text="Categories"
     )
@@ -136,7 +157,7 @@ async def handle_category_products(ctx: BotContext, to: str, category_id: int):
 
     rows = []
     for p in products:
-        price_text = f"${p.get('price')}" if p.get("price") else "Price on request"
+        price_text = f"BDT {p.get('price')}" if p.get("price") else "Price on request"
         rows.append({
             "id": f"prod_{p['id']}",
             "title": p["name"],
@@ -171,9 +192,9 @@ async def handle_product_detail(ctx: BotContext, to: str, product_id: int):
     price_val = product.get("price")
     
     if sale_price and regular_price and float(sale_price) < float(regular_price):
-        price_display = f"~${regular_price}~ *${sale_price}* (Sale!)"
+        price_display = f"~BDT {regular_price}~ *${sale_price}* (Sale!)"
     elif price_val:
-        price_display = f"*${price_val}*"
+        price_display = f"*BDT {price_val}*"
     else:
         price_display = "Price on request"
 
@@ -302,7 +323,7 @@ async def handle_show_variations(ctx: BotContext, to: str, product_id: int):
         stock_status = v.get("stock_status", "instock")
         in_stock = stock_status != "outofstock"
 
-        price_text = f"${var_price}" if var_price else ""
+        price_text = f"BDT {var_price}" if var_price else ""
         rows.append({
             "id": f"varadd_{product_id}_{v['id']}",
             "title": size[:24],
@@ -450,11 +471,11 @@ async def handle_view_cart(ctx: BotContext, to: str):
         total += subtotal
         cart_text += (
             f"• *{item['name']}* x{item['quantity']}\n"
-            f"  Price: ${item['price']:.2f} (Subtotal: ${subtotal:.2f})\n"
+            f"  Price: BDT {item['price']:.2f} (Subtotal: BDT {subtotal:.2f})\n"
             f"  Remove: Reply _Remove {item['product_id']}_\n\n"
         )
 
-    cart_text += f"*Total Amount: ${total:.2f}*"
+    cart_text += f"*Total Amount: BDT {total:.2f}*"
 
     buttons = [
         {"id": "cart_checkout", "title": "💳 Checkout"},
@@ -519,7 +540,7 @@ async def handle_process_checkout(ctx: BotContext, to: str, text: str):
         f"📋 *Confirm your Cash on Delivery (COD) Order*\n\n"
         f"Name: *{name}*\n"
         f"Shipping Address:\n_{address}_\n\n"
-        f"Total Amount: *${total:.2f}*\n"
+        f"Total Amount: *BDT {total:.2f}*\n"
         f"Payment Method: *Cash on Delivery (COD)*\n\n"
         f"Do you want to confirm and place this order?"
     )
@@ -562,7 +583,7 @@ async def handle_place_order(ctx: BotContext, to: str, name: str, address: str):
     success_text = (
         f"🎉 *Order Placed Successfully!*\n\n"
         f"Order ID: *#{order.get('id')}*\n"
-        f"Total Amount: *${order.get('total')}*\n"
+        f"Total Amount: *BDT {order.get('total')}*\n"
         f"Payment Method: *{order.get('payment_method_title')}*\n\n"
         f"We will ship your items to:\n_{address}_\n\n"
         f"Thank you for shopping with us!"
@@ -723,7 +744,7 @@ async def handle_clear_cart(ctx: BotContext, to: str):
 async def handle_human_agent(ctx: BotContext, to: str):
     """Pauses the bot and provides a link to contact a human agent."""
     await ctx.db.set_bot_paused(to, True)
-    agent_phone = os.getenv("HUMAN_AGENT_PHONE", "1234567890")
+    agent_phone = os.getenv("HUMAN_AGENT_PHONE", "8801952700500")
     msg = (
         "⏸️ I have paused my automated responses.\n\n"
         f"Please click this link to chat directly with our human agent on WhatsApp:\n👉 https://wa.me/{agent_phone}\n\n"
@@ -752,7 +773,7 @@ async def handle_ai_search(ctx: BotContext, to: str, query: str):
             if top_score >= 65.0:
                 rows = []
                 for p in fuzzy_matches:
-                    price_text = f"${p.get('price')}" if p.get("price") else "Price on request"
+                    price_text = f"BDT {p.get('price')}" if p.get("price") else "Price on request"
                     rows.append({
                         "id": f"prod_{p['id']}",
                         "title": p.get("name", "")[:24],
@@ -802,7 +823,7 @@ async def handle_ai_search(ctx: BotContext, to: str, query: str):
     if matching_products:
         rows = []
         for p in matching_products:
-            price_text = f"${p.get('price')}" if p.get("price") else "Price on request"
+            price_text = f"BDT {p.get('price')}" if p.get("price") else "Price on request"
             rows.append({
                 "id": f"prod_{p['id']}",
                 "title": p["name"],
@@ -845,9 +866,65 @@ async def handle_recommend_for_you(ctx: BotContext, to: str):
     purchased = ", ".join(set(history_desc))
     await ctx.wa.send_text_message(to, f"Based on your past purchases of:\n_{purchased}_\n\nLet me find some great recommendations for you... 🔍")
     
-    # Trigger AI search for recommendations
     prompt = f"I previously bought {purchased}. What other products from your store would you recommend for me?"
-    await handle_ai_search(ctx, to, prompt)
+    
+    history = await ctx.db.get_user_history(to)
+    result = await ctx.agent.answer_query(prompt, history=history, orders=orders)
+    products = result.get("products", [])
+    
+    if products:
+        from media_utils import generate_collage
+        image_urls = []
+        for p in products[:4]:
+            if p.get("images") and len(p["images"]) > 0:
+                image_urls.append(p["images"][0].get("src"))
+                
+        collage_path = await generate_collage(image_urls, f"collage_{to}.jpg")
+        
+        caption = result.get("text", "Here are some recommendations for you!") + "\n\n"
+        for p in products[:4]:
+            price = f"BDT {p.get('price')}" if p.get('price') else ""
+            caption += f"• {p['name']} ({price})\n"
+            
+        if collage_path:
+            media_id = await ctx.wa.upload_media(collage_path)
+            if media_id:
+                await ctx.wa.send_image_message(to, media_id=media_id, caption=caption)
+            else:
+                await ctx.wa.send_text_message(to, caption)
+            import os
+            try:
+                os.remove(collage_path)
+            except:
+                pass
+        else:
+            await ctx.wa.send_text_message(to, caption)
+            
+        rows = []
+        for p in products[:4]:
+            price_text = f"BDT {p.get('price')}" if p.get("price") else "Price on request"
+            rows.append({
+                "id": f"prod_{p['id']}",
+                "title": p["name"][:24],
+                "description": f"{price_text} - View details"[:72]
+            })
+        sections = [{"title": "Recommended Items", "rows": rows}]
+        await ctx.wa.send_list_message(
+            to=to,
+            button_text="View Products",
+            body_text="Click below to see more details or add to cart:",
+            sections=sections,
+            header_text="Your Recommendations"
+        )
+    else:
+        await ctx.wa.send_text_message(to, result.get("text", "I couldn't find any specific recommendations right now."))
+
+async def handle_change_language(ctx: BotContext, to: str):
+    """Toggles language between en and bn."""
+    lang = await ctx.db.get_user_language(to)
+    new_lang = "bn" if lang == "en" else "en"
+    await ctx.db.set_user_language(to, new_lang)
+    await handle_main_menu(ctx, to)
 
 # ==================== DISPATCH TABLES ====================
 
@@ -862,6 +939,7 @@ ACTION_HANDLERS = {
     "menu_size": handle_size_rec_start,
     "menu_recommend": handle_recommend_for_you,
     "menu_cancel_order": lambda ctx, to: handle_cancel_order_request(ctx, to, ""),
+    "menu_language": handle_change_language,
 }
 
 PREFIX_HANDLERS = [

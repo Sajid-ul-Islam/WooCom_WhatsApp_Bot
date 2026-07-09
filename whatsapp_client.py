@@ -182,17 +182,43 @@ class WhatsAppClient:
         }
         return await self._post_request(payload)
 
-    async def send_image_message(self, to: str, image_url: str, caption: Optional[str] = None) -> Dict[str, Any]:
-        """Send an image with an optional caption."""
+    async def upload_media(self, file_path: str, mime_type: str = "image/jpeg") -> Optional[str]:
+        """Uploads media to WhatsApp and returns the media ID."""
+        if not self.phone_id or not self.token:
+            return None
+            
+        url = f"https://graph.facebook.com/v20.0/{self.phone_id}/media"
+        try:
+            with open(file_path, "rb") as f:
+                files = {"file": (os.path.basename(file_path), f, mime_type)}
+                data = {"messaging_product": "whatsapp"}
+                headers = {"Authorization": f"Bearer {self.token}"}
+                response = await self._client.post(url, headers=headers, data=data, files=files)
+                res_data = response.json()
+                if response.status_code == 200 and "id" in res_data:
+                    return res_data["id"]
+                else:
+                    logger.error(f"Failed to upload media: {res_data}")
+                    return None
+        except Exception as e:
+            logger.error(f"Error uploading media {file_path}: {e}")
+            return None
+
+    async def send_image_message(self, to: str, image_url: Optional[str] = None, media_id: Optional[str] = None, caption: Optional[str] = None) -> Dict[str, Any]:
+        """Send an image via URL or Media ID with an optional caption."""
         payload = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
             "to": to,
             "type": "image",
-            "image": {
-                "link": image_url
-            }
+            "image": {}
         }
+        
+        if media_id:
+            payload["image"]["id"] = media_id
+        elif image_url:
+            payload["image"]["link"] = image_url
+            
         if caption:
             payload["image"]["caption"] = caption[:1024]  # Caption limit is 1024 characters
         return await self._post_request(payload)
