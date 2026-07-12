@@ -146,11 +146,17 @@ class FuzzyProductSearch:
         """Extract unique size option values from variation attributes."""
         sizes = []
         for v in variations:
+            size_val = ""
             for attr in v.get("attributes", []):
-                if attr.get("name", "").lower() == "size":
-                    option = attr.get("option", "")
-                    if option and option not in sizes:
-                        sizes.append(option)
+                if "size" in attr.get("name", "").lower():
+                    size_val = attr.get("option", "")
+                    break
+            
+            if not size_val and v.get("attributes"):
+                size_val = " / ".join(str(a.get("option", "")) for a in v.get("attributes") if a.get("option"))
+                
+            if size_val and size_val not in sizes:
+                sizes.append(size_val)
         return sizes
 
     def _build_search_text(self, product: Dict[str, Any]) -> str:
