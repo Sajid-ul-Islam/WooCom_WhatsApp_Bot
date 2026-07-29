@@ -3,7 +3,7 @@ import re
 import logging
 from context import BotContext
 from utils import clean_html
-from i18n import get_text
+from i18n import get_text, format_text
 
 logger = logging.getLogger(__name__)
 
@@ -19,57 +19,57 @@ async def handle_main_menu(ctx: BotContext, to: str):
 
     # 1. Shopping Section
     shopping_rows = [
-        {"id": "menu_categories", "title": get_text(lang, "menu_categories"), "description": "Explore our collections and special offers"},
-        {"id": "menu_recommend", "title": get_text(lang, "menu_recommend"), "description": "Products selected just for you based on your history"}
+        {"id": "menu_categories", "title": get_text(lang, "menu_categories"), "description": get_text(lang, "desc_explore")},
+        {"id": "menu_recommend", "title": get_text(lang, "menu_recommend"), "description": get_text(lang, "desc_for_you")}
     ]
     
     if cart_items > 0:
         shopping_rows.append({
             "id": "menu_cart", 
             "title": f"🛒 ({cart_items}) {get_text(lang, 'menu_cart')}", 
-            "description": "You have items waiting! Ready to checkout?"
+            "description": get_text(lang, "desc_cart_items")
         })
     else:
         shopping_rows.append({
             "id": "menu_cart", 
             "title": get_text(lang, "menu_cart"), 
-            "description": "Your cart is currently empty"
+            "description": get_text(lang, "desc_empty_cart")
         })
         
     shopping_rows.append({
         "id": "menu_size", 
         "title": get_text(lang, "menu_size"), 
-        "description": "Find your perfect fit instantly"
+        "description": get_text(lang, "desc_find_size")
     })
 
     # 2. Account Section
     account_rows = [
-        {"id": "menu_orders", "title": get_text(lang, "menu_orders"), "description": "View your recent purchases and status"}
+        {"id": "menu_orders", "title": get_text(lang, "menu_orders"), "description": get_text(lang, "desc_view_orders")}
     ]
     
     # 3. Support & Settings Section
     support_rows = [
-        {"id": "menu_cancel_order", "title": "❌ Cancel Order", "description": "Request a cancellation for a recent order"},
-        {"id": "menu_human", "title": get_text(lang, "menu_human"), "description": "Pause the AI and chat with a real human"},
-        {"id": "menu_language", "title": get_text(lang, "menu_language"), "description": "English / বাংলা"}
+        {"id": "menu_cancel_order", "title": get_text(lang, "menu_cancel_order"), "description": get_text(lang, "desc_cancel_order")},
+        {"id": "menu_human", "title": get_text(lang, "menu_human"), "description": get_text(lang, "desc_talk_human")},
+        {"id": "menu_language", "title": get_text(lang, "menu_language"), "description": get_text(lang, "desc_change_lang")}
     ]
     
     if cart_items > 0:
         support_rows.append({
             "id": "cart_clear", 
             "title": get_text(lang, "cart_clear"), 
-            "description": "Empty all items from your cart"
+            "description": get_text(lang, "desc_clear_cart")
         })
 
     sections = [
-        {"title": "🛍️ Store", "rows": shopping_rows},
-        {"title": "👤 Account", "rows": account_rows},
-        {"title": "📞 Support", "rows": support_rows}
+        {"title": get_text(lang, "section_store"), "rows": shopping_rows},
+        {"title": get_text(lang, "section_account"), "rows": account_rows},
+        {"title": get_text(lang, "section_support"), "rows": support_rows}
     ]
 
     await ctx.wa.send_list_message(
         to=to,
-        button_text="☰ Open Menu",
+        button_text=get_text(lang, "btn_open_menu"),
         body_text=text,
         sections=sections,
         header_text="DEEN Commerce"
@@ -80,10 +80,14 @@ async def handle_categories(ctx: BotContext, to: str):
     """Sends product categories to the user as a List Message, split into Promos, Men's, and Others."""
     # Fetch top-level categories (for promos and others) and MEN's subcategories (for regular items)
     top_categories = await ctx.wc.get_categories(parent=0)
-    men_categories = await ctx.wc.get_categories(parent=508)
+
+    # Men's category parent ID — configurable via env var; set to 0 to skip the men's section
+    men_parent_id = int(os.getenv("MEN_CATEGORY_PARENT_ID", "0"))
+    men_categories = await ctx.wc.get_categories(parent=men_parent_id) if men_parent_id > 0 else []
     
+    lang = await ctx.db.get_user_language(to)
     if not top_categories and not men_categories:
-        await ctx.wa.send_text_message(to, "Sorry, I couldn't load store categories right now.")
+        await ctx.wa.send_text_message(to, get_text(lang, "no_categories"))
         return
 
     promo_keywords = ["sale", "new", "off", "bogo", "discount", "%", "offer", "clearance", "bundle", "value"]
@@ -107,7 +111,7 @@ async def handle_categories(ctx: BotContext, to: str):
             other_rows.append({
                 "id": f"cat_{cat['id']}",
                 "title": cat["name"][:24],
-                "description": f"View products in {cat['name']}"[:72]
+                "description": f"{get_text(lang, 'btn_view_detail')} in {cat['name']}"[:72]
             })
 
     # Extract regular categories from MEN (id: 508)
@@ -125,13 +129,11 @@ async def handle_categories(ctx: BotContext, to: str):
 
     sections = []
     if final_promo:
-        sections.append({"title": "🔥 Special Offers", "rows": final_promo})
+        sections.append({"title": get_text(lang, "section_special_offers"), "rows": final_promo})
     if final_mens:
-        sections.append({"title": "🛍️ Men's Collection", "rows": final_mens})
+        sections.append({"title": get_text(lang, "section_mens_collection"), "rows": final_mens})
     if final_other:
-        sections.append({"title": "✨ Other Categories", "rows": final_other})
-
-    lang = await ctx.db.get_user_language(to)
+        sections.append({"title": get_text(lang, "section_other_categories"), "rows": final_other})
     
     await ctx.wa.send_list_message(
         to=to,
@@ -144,26 +146,27 @@ async def handle_categories(ctx: BotContext, to: str):
 
 async def handle_category_products(ctx: BotContext, to: str, category_id: int):
     """Sends products in a specific category as a List Message."""
+    lang = await ctx.db.get_user_language(to)
     products = await ctx.wc.get_products(category_id=category_id, per_page=10)
     if not products:
-        await ctx.wa.send_text_message(to, "This category doesn't have any products currently.")
+        await ctx.wa.send_text_message(to, get_text(lang, "no_products_in_cat"))
         return
 
     rows = []
     for p in products:
-        price_text = f"BDT {p.get('price')}" if p.get("price") else "Price on request"
+        price_text = f"BDT {p.get('price')}" if p.get("price") else get_text(lang, "price_on_request")
         rows.append({
             "id": f"prod_{p['id']}",
             "title": p["name"],
-            "description": f"{price_text} - View details"
+            "description": f"{price_text} - {get_text(lang, 'desc_view_detail')}"
         })
 
-    sections = [{"title": "Available Products", "rows": rows}]
+    sections = [{"title": get_text(lang, "section_available_products"), "rows": rows}]
 
     await ctx.wa.send_list_message(
         to=to,
-        button_text="Select Product",
-        body_text="Here are the products in this category. Select one to see details:",
+        button_text=get_text(lang, "btn_select_product"),
+        body_text=get_text(lang, "select_product"),
         sections=sections,
         header_text="Category Products"
     )
@@ -172,9 +175,10 @@ async def handle_category_products(ctx: BotContext, to: str, category_id: int):
 async def handle_product_detail(ctx: BotContext, to: str, product_id: int):
     """Sends product details dynamically, extracting precise pricing, stock, and metadata.
     Detects if product has variations (e.g. sizes) and adjusts buttons accordingly."""
+    lang = await ctx.db.get_user_language(to)
     product = await ctx.wc.get_product(product_id)
     if not product:
-        await ctx.wa.send_text_message(to, "Sorry, I couldn't find details for that product.")
+        await ctx.wa.send_text_message(to, get_text(lang, "no_product_details"))
         return
 
     name = product.get("name")
@@ -190,29 +194,29 @@ async def handle_product_detail(ctx: BotContext, to: str, product_id: int):
     elif price_val:
         price_display = f"*BDT {price_val}*"
     else:
-        price_display = "Price on request"
+        price_display = get_text(lang, "price_on_request")
 
     # 2. Stock Status
     stock_status = product.get("stock_status", "instock")
     if stock_status == "instock":
-        stock_display = "✅ In Stock"
+        stock_display = get_text(lang, "in_stock")
         qty = product.get("stock_quantity")
         if qty:
             stock_display += f" ({qty} available)"
     elif stock_status == "outofstock":
-        stock_display = "❌ Out of Stock"
+        stock_display = get_text(lang, "out_of_stock")
     else:
-        stock_display = "⏳ On Backorder"
+        stock_display = get_text(lang, "on_backorder")
         
     # 3. Categories & Rating
     cats = product.get("categories", [])
-    cat_names = ", ".join(c.get("name", "") for c in cats) if cats else "General"
+    cat_names = ", ".join(c.get("name", "") for c in cats) if cats else get_text(lang, "general_category")
     
     rating = product.get("average_rating", "0.0")
-    rating_display = f"⭐ {rating}/5.0" if float(rating) > 0 else "No reviews yet"
+    rating_display = f"⭐ {rating}/5.0" if float(rating) > 0 else get_text(lang, "no_reviews")
 
     # 4. Clean Description
-    desc_raw = product.get("short_description") or product.get("description") or "No description available."
+    desc_raw = product.get("short_description") or product.get("description") or ""
     description = clean_html(desc_raw).strip()
     if len(description) > 200:
         description = description[:197] + "..."
@@ -235,34 +239,35 @@ async def handle_product_detail(ctx: BotContext, to: str, product_id: int):
 
     if product_type == "variable":
         buttons = [
-            {"id": f"size_sel_{product_id}", "title": "📏 Select Size"},
-            {"id": f"size_chart_{product_id}", "title": "📐 Size Chart"},
-            {"id": "menu_main", "title": "🏠 Main Menu"}
+            {"id": f"size_sel_{product_id}", "title": get_text(lang, "btn_select_size")},
+            {"id": f"size_chart_{product_id}", "title": get_text(lang, "btn_size_chart")},
+            {"id": "menu_main", "title": get_text(lang, "btn_main_menu")}
         ]
     else:
         buttons = [
-            {"id": f"add_{product_id}", "title": "🛒 Add to Cart"},
-            {"id": "menu_cart", "title": "🛍️ View Cart"},
-            {"id": "menu_main", "title": "🏠 Main Menu"}
+            {"id": f"add_{product_id}", "title": get_text(lang, "btn_add_to_cart")},
+            {"id": "menu_cart", "title": get_text(lang, "btn_view_cart")},
+            {"id": "menu_main", "title": get_text(lang, "btn_main_menu")}
         ]
 
     if image_url:
         await ctx.wa.send_image_message(to, image_url, caption=caption)
-        await ctx.wa.send_reply_buttons(to, "What would you like to do next?", buttons)
+        await ctx.wa.send_reply_buttons(to, get_text(lang, "what_next"), buttons)
     else:
         await ctx.wa.send_reply_buttons(to, caption, buttons)
 
 
 async def handle_show_variations(ctx: BotContext, to: str, product_id: int):
     """Shows available size options for a variable product as a selectable list."""
+    lang = await ctx.db.get_user_language(to)
     product = await ctx.wc.get_product(product_id)
     if not product:
-        await ctx.wa.send_text_message(to, "Sorry, I couldn't find that product.")
+        await ctx.wa.send_text_message(to, get_text(lang, "no_product_details"))
         return
 
     variations = await ctx.wc.get_product_variations(product_id)
     if not variations:
-        await ctx.wa.send_text_message(to, "This product has no available size options at the moment.")
+        await ctx.wa.send_text_message(to, get_text(lang, "no_sizes_available"))
         return
 
     rows = []
@@ -291,30 +296,30 @@ async def handle_show_variations(ctx: BotContext, to: str, product_id: int):
         rows.append({
             "id": f"varadd_{product_id}_{v['id']}",
             "title": size[:24],
-            "description": f"{price_text}" if in_stock else f"{price_text} - Out of Stock"
+            "description": f"{price_text}" if in_stock else f"{price_text} - {get_text(lang, 'desc_out_of_stock')}"
         })
 
     if not rows:
-        await ctx.wa.send_text_message(to, "No sizes are currently available for this product.")
+        await ctx.wa.send_text_message(to, get_text(lang, "no_sizes_available_now"))
         return
 
     sections = [
         {
-            "title": "Available Sizes",
+            "title": get_text(lang, "available_sizes"),
             "rows": rows
         },
         {
-            "title": "Help",
+            "title": get_text(lang, "help_section"),
             "rows": [
-                {"id": f"size_chart_{product_id}", "title": "📐 View Size Chart", "description": "See our sizing guide"}
+                {"id": f"size_chart_{product_id}", "title": get_text(lang, "view_size_chart"), "description": get_text(lang, "see_sizing_guide")}
             ]
         }
     ]
 
     await ctx.wa.send_list_message(
         to=to,
-        button_text="Select Size",
-        body_text=f"Choose your size for *{product.get('name')}*:",
+        button_text=get_text(lang, "btn_select_size"),
+        body_text=format_text(lang, "choose_size_for", product_name=product.get('name', '')),
         sections=sections,
         header_text="Select Size"
     )
@@ -322,6 +327,7 @@ async def handle_show_variations(ctx: BotContext, to: str, product_id: int):
 
 async def handle_size_chart(ctx: BotContext, to: str, product_id: int):
     """Shows the sizing guide/chart by extracting an image from the product description."""
+    lang = await ctx.db.get_user_language(to)
     product = await ctx.wc.get_product(product_id)
     image_url = None
 
@@ -333,30 +339,16 @@ async def handle_size_chart(ctx: BotContext, to: str, product_id: int):
             image_url = match.group(1)
 
     buttons = [
-        {"id": f"size_sel_{product_id}", "title": "📏 Select Size"},
-        {"id": "menu_main", "title": "🏠 Main Menu"}
+        {"id": f"size_sel_{product_id}", "title": get_text(lang, "btn_select_size")},
+        {"id": "menu_main", "title": get_text(lang, "btn_main_menu")}
     ]
 
     if image_url:
-        await ctx.wa.send_image_message(to, image_url, caption="📏 *Size Chart*")
-        await ctx.wa.send_reply_buttons(to, "Would you like to select a size?", buttons)
+        await ctx.wa.send_image_message(to, image_url, caption=get_text(lang, "size_guide_title"))
+        await ctx.wa.send_reply_buttons(to, get_text(lang, "what_next"), buttons)
     else:
         # Fallback to default size guide if no image is found
-        size_guide = (
-            "📏 *Size Guide*\n\n"
-            "*Panjabis & Shirts:*\n"
-            "• S (Small): Height 5'2\"-5'5\", Weight 50-60 kg (Chest: 38\")\n"
-            "• M (Medium): Height 5'5\"-5'7\", Weight 60-70 kg (Chest: 40\")\n"
-            "• L (Large): Height 5'7\"-5'10\", Weight 70-80 kg (Chest: 42\")\n"
-            "• XL (XL): Height 5'10\"-6'0\", Weight 80-90 kg (Chest: 44\")\n"
-            "• XXL (2XL): Height 6'0\"+, Weight 90+ kg (Chest: 46\")\n\n"
-            "*Delivery:*\n"
-            "• Inside Dhaka: 80 BDT, 2-3 days\n"
-            "• Outside Dhaka: 150 BDT, 3-5 days\n"
-            "• Cash on Delivery (COD) available nationwide.\n\n"
-            "Need a personal recommendation? Use the *Size Assistant* from the main menu!"
-        )
-        await ctx.wa.send_reply_buttons(to, size_guide, buttons)
+        await ctx.wa.send_reply_buttons(to, get_text(lang, "size_guide_full"), buttons)
 
 
 async def handle_ai_search(ctx: BotContext, to: str, query: str):
@@ -365,6 +357,7 @@ async def handle_ai_search(ctx: BotContext, to: str, query: str):
     from support_handlers import handle_human_agent
     
     # === Fast Path: Direct Fuzzy Match ===
+    lang = await ctx.db.get_user_language(to)
     if ctx.fuzzy and ctx.fuzzy.ready:
         fuzzy_matches = ctx.fuzzy.search(query, max_results=5, min_score=60.0)
         if fuzzy_matches:
@@ -380,24 +373,24 @@ async def handle_ai_search(ctx: BotContext, to: str, query: str):
             if top_score >= 65.0:
                 rows = []
                 for p in fuzzy_matches:
-                    price_text = f"BDT {p.get('price')}" if p.get("price") else "Price on request"
+                    price_text = f"BDT {p.get('price')}" if p.get("price") else get_text(lang, "price_on_request")
                     rows.append({
                         "id": f"prod_{p['id']}",
                         "title": p.get("name", "")[:24],
-                        "description": f"{price_text} - View details"[:72]
+                        "description": f"{price_text} - {get_text(lang, 'desc_view_detail')}"[:72]
                     })
-                sections = [{"title": "Matching Products", "rows": rows}]
+                sections = [{"title": get_text(lang, "section_available_products"), "rows": rows}]
                 await ctx.wa.send_list_message(
                     to=to,
-                    button_text="View Matches",
-                    body_text="I found these items based on your search:",
+                    button_text=get_text(lang, "btn_view_matches"),
+                    body_text=get_text(lang, "found_matches"),
                     sections=sections,
                     header_text="Search Results"
                 )
                 return
 
     # === Fallback: AI Search ===
-    await ctx.wa.send_text_message(to, "🔍 Searching the catalog, please wait...")
+    await ctx.wa.send_text_message(to, get_text(lang, "search_wait"))
 
     history = await ctx.db.get_user_history(to)
     orders = await ctx.db.get_cached_orders(to)
@@ -408,12 +401,7 @@ async def handle_ai_search(ctx: BotContext, to: str, query: str):
     # Sentiment auto-escalation
     if sentiment in ["frustrated", "angry"]:
         logger.info(f"Auto-escalating user {to} due to {sentiment} sentiment.")
-        escalation_msg = (
-            "⚠️ *Human Agent Escalation*\n\n"
-            "I detect that you are frustrated or need urgent assistance. "
-            "I am pausing my automated responses and transferring you to our human support team."
-        )
-        await ctx.wa.send_text_message(to, escalation_msg)
+        await ctx.wa.send_text_message(to, get_text(lang, "escalation_msg"))
         await handle_human_agent(ctx, to)
         return
 
@@ -430,33 +418,51 @@ async def handle_ai_search(ctx: BotContext, to: str, query: str):
     if matching_products:
         rows = []
         for p in matching_products:
-            price_text = f"BDT {p.get('price')}" if p.get("price") else "Price on request"
+            price_text = f"BDT {p.get('price')}" if p.get("price") else get_text(lang, "price_on_request")
             rows.append({
                 "id": f"prod_{p['id']}",
                 "title": p["name"],
-                "description": f"{price_text} - View details"
+                "description": f"{price_text} - {get_text(lang, 'desc_view_detail')}"
             })
-        sections = [{"title": "Recommended Items", "rows": rows}]
+        sections = [{"title": get_text(lang, "recommended_items_title"), "rows": rows}]
         await ctx.wa.send_list_message(
             to=to,
-            button_text="View Match",
-            body_text="Click below to see the specifications, photos or add recommended products to cart:",
+            button_text=get_text(lang, "btn_view_matches"),
+            body_text=get_text(lang, "click_to_view"),
             sections=sections,
-            header_text="Matching Results"
+            header_text=get_text(lang, "matching_results_title")
         )
     else:
         buttons = [
-            {"id": "menu_categories", "title": "Browse Categories"},
-            {"id": "menu_main", "title": "🏠 Main Menu"}
+            {"id": "menu_categories", "title": get_text(lang, "menu_categories")},
+            {"id": "menu_main", "title": get_text(lang, "btn_main_menu")}
         ]
-        await ctx.wa.send_reply_buttons(to, "What would you like to do?", buttons)
+        await ctx.wa.send_reply_buttons(to, get_text(lang, "browse_prompt"), buttons)
+
+
+async def handle_sku_search(ctx: BotContext, to: str, sku: str):
+    """Looks up a product by SKU code and displays its details if found.
+
+    If no product matches the SKU, falls through to AI search so the
+    text is still processed as a normal query (handles false positives
+    gracefully).
+    """
+    product = await ctx.wc.get_product_by_sku(sku)
+    if not product:
+        # Not a valid SKU — fall through to normal text search
+        await handle_ai_search(ctx, to, sku)
+        return
+
+    # Found the product — reuse the existing product detail display
+    await handle_product_detail(ctx, to, product["id"])
 
 
 async def handle_recommend_for_you(ctx: BotContext, to: str):
     """Sends personalized recommendations to the user based on their past orders."""
+    lang = await ctx.db.get_user_language(to)
     orders = await ctx.db.get_cached_orders(to)
     if not orders:
-        await ctx.wa.send_text_message(to, "I don't have enough purchase history to make personalized recommendations yet. 😅 But here are some of our most popular items!")
+        await ctx.wa.send_text_message(to, get_text(lang, "recommend_no_history"))
         await handle_ai_search(ctx, to, "Please show me your most popular products and top categories.")
         return
 
@@ -466,12 +472,12 @@ async def handle_recommend_for_you(ctx: BotContext, to: str):
             history_desc.append(item.get("name"))
             
     if not history_desc:
-        await ctx.wa.send_text_message(to, "I couldn't find items in your past orders. Here are some popular products!")
+        await ctx.wa.send_text_message(to, get_text(lang, "recommend_no_items"))
         await handle_ai_search(ctx, to, "Please show me your most popular products.")
         return
 
     purchased = ", ".join(set(history_desc))
-    await ctx.wa.send_text_message(to, f"Based on your past purchases of:\n_{purchased}_\n\nLet me find some great recommendations for you... 🔍")
+    await ctx.wa.send_text_message(to, format_text(lang, "recommend_searching", purchased=purchased))
     
     prompt = f"I previously bought {purchased}. What other products from your store would you recommend for me?"
     
@@ -488,7 +494,7 @@ async def handle_recommend_for_you(ctx: BotContext, to: str):
                 
         collage_path = await generate_collage(image_urls, f"collage_{to}.jpg")
         
-        caption = result.get("text", "Here are some recommendations for you!") + "\n\n"
+        caption = result.get("text", get_text(lang, "recommended_items_title")) + "\n\n"
         for p in products[:4]:
             price = f"BDT {p.get('price')}" if p.get('price') else ""
             caption += f"• {p['name']} ({price})\n"
@@ -508,19 +514,19 @@ async def handle_recommend_for_you(ctx: BotContext, to: str):
             
         rows = []
         for p in products[:4]:
-            price_text = f"BDT {p.get('price')}" if p.get("price") else "Price on request"
+            price_text = f"BDT {p.get('price')}" if p.get("price") else get_text(lang, "price_on_request")
             rows.append({
                 "id": f"prod_{p['id']}",
                 "title": p["name"][:24],
-                "description": f"{price_text} - View details"[:72]
+                "description": f"{price_text} - {get_text(lang, 'desc_view_detail')}"[:72]
             })
-        sections = [{"title": "Recommended Items", "rows": rows}]
+        sections = [{"title": get_text(lang, "recommended_items_title"), "rows": rows}]
         await ctx.wa.send_list_message(
             to=to,
-            button_text="View Products",
-            body_text="Click below to see more details or add to cart:",
+            button_text=get_text(lang, "btn_view_products"),
+            body_text=get_text(lang, "click_to_view"),
             sections=sections,
             header_text="Your Recommendations"
         )
     else:
-        await ctx.wa.send_text_message(to, result.get("text", "I couldn't find any specific recommendations right now."))
+        await ctx.wa.send_text_message(to, result.get("text", get_text(lang, "no_recommendations")))

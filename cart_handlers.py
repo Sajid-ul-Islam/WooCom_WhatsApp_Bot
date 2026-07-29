@@ -1,5 +1,6 @@
 import logging
 from context import BotContext
+from i18n import get_text, format_text
 from shopping_handlers import handle_show_variations
 
 logger = logging.getLogger(__name__)
@@ -7,9 +8,10 @@ logger = logging.getLogger(__name__)
 
 async def handle_add_to_cart(ctx: BotContext, to: str, product_id: int, quantity: int = 1):
     """Adds a simple (non-variable) product to the user's Supabase cart."""
+    lang = await ctx.db.get_user_language(to)
     product = await ctx.wc.get_product(product_id)
     if not product:
-        await ctx.wa.send_text_message(to, "Sorry, that product is no longer available.")
+        await ctx.wa.send_text_message(to, get_text(lang, "product_unavailable"))
         return
 
     # If product is variable, route to size selection instead
@@ -29,27 +31,28 @@ async def handle_add_to_cart(ctx: BotContext, to: str, product_id: int, quantity
         image_url=image_url
     )
 
-    text = f"✅ *{product.get('name')}* has been added to your cart!"
+    text = format_text(lang, "item_added", product_name=product.get('name', ''))
     buttons = [
-        {"id": "menu_cart", "title": "🛍️ View Cart"},
-        {"id": "menu_categories", "title": "Browse More"},
-        {"id": "menu_main", "title": "🏠 Main Menu"}
+        {"id": "menu_cart", "title": get_text(lang, "btn_view_cart")},
+        {"id": "menu_categories", "title": get_text(lang, "btn_browse_more")},
+        {"id": "menu_main", "title": get_text(lang, "btn_main_menu")}
     ]
     await ctx.wa.send_reply_buttons(to, text, buttons)
 
 
 async def handle_add_variation_to_cart(ctx: BotContext, to: str, product_id: int, variation_id: int):
     """Adds a specific variation (size) of a product to the user's cart."""
+    lang = await ctx.db.get_user_language(to)
     # Get parent product for name and image
     product = await ctx.wc.get_product(product_id)
     if not product:
-        await ctx.wa.send_text_message(to, "Sorry, that product is no longer available.")
+        await ctx.wa.send_text_message(to, get_text(lang, "product_unavailable"))
         return
 
     # Get the specific variation for its price and attribute details
     variation = await ctx.wc.get_product_variation(product_id, variation_id)
     if not variation:
-        await ctx.wa.send_text_message(to, "Sorry, that size option is no longer available.")
+        await ctx.wa.send_text_message(to, get_text(lang, "size_unavailable"))
         return
 
     # Extract the size name from variation attributes
@@ -84,77 +87,72 @@ async def handle_add_variation_to_cart(ctx: BotContext, to: str, product_id: int
         image_url=image_url
     )
 
-    text = f"✅ *{full_name}* has been added to your cart!"
+    text = format_text(lang, "variation_added", product_name=full_name)
     buttons = [
-        {"id": "menu_cart", "title": "🛍️ View Cart"},
-        {"id": "menu_categories", "title": "Browse More"},
-        {"id": "menu_main", "title": "🏠 Main Menu"}
+        {"id": "menu_cart", "title": get_text(lang, "btn_view_cart")},
+        {"id": "menu_categories", "title": get_text(lang, "btn_browse_more")},
+        {"id": "menu_main", "title": get_text(lang, "btn_main_menu")}
     ]
     await ctx.wa.send_reply_buttons(to, text, buttons)
 
 
 async def handle_remove_from_cart(ctx: BotContext, to: str, product_id: int):
     """Removes a product from the user's cart and shows updated cart."""
+    lang = await ctx.db.get_user_language(to)
     await ctx.db.remove_from_cart(to, product_id)
-    await ctx.wa.send_text_message(to, f"❌ Removed product #{product_id} from your cart.")
+    await ctx.wa.send_text_message(to, format_text(lang, "item_removed", product_id=product_id))
     await handle_view_cart(ctx, to)
 
 
 async def handle_view_cart(ctx: BotContext, to: str):
     """Displays the user's current shopping cart and actions."""
+    lang = await ctx.db.get_user_language(to)
     cart_items = await ctx.db.get_cart(to)
     if not cart_items:
-        text = "Your shopping cart is currently empty! 🛒\n\nBrowse our catalog to add items."
+        text = get_text(lang, "cart_empty_shop")
         buttons = [
-            {"id": "menu_categories", "title": "Browse Catalog"},
-            {"id": "menu_main", "title": "🏠 Main Menu"}
+            {"id": "menu_categories", "title": get_text(lang, "btn_browse_catalog")},
+            {"id": "menu_main", "title": get_text(lang, "btn_main_menu")}
         ]
         await ctx.wa.send_reply_buttons(to, text, buttons)
         return
 
-    cart_text = "🛍️ *Your Shopping Cart:*\n\n"
+    cart_text = get_text(lang, "cart_summary") + "\n\n"
     total = 0.0
     for item in cart_items:
         subtotal = item["price"] * item["quantity"]
         total += subtotal
         cart_text += (
             f"• *{item['name']}* x{item['quantity']}\n"
-            f"  Price: BDT {item['price']:.2f} (Subtotal: BDT {subtotal:.2f})\n"
-            f"  Remove: Reply _Remove {item['product_id']}_\n\n"
+            f"  {get_text(lang, 'cart_item_price')}: BDT {item['price']:.2f} ({get_text(lang, 'cart_item_subtotal')}: BDT {subtotal:.2f})\n"
+            f"  {format_text(lang, 'cart_remove_hint', product_id=item['product_id'])}\n\n"
         )
 
-    cart_text += f"*Total Amount: BDT {total:.2f}*"
+    cart_text += f"*{get_text(lang, 'cart_total')}: BDT {total:.2f}*"
 
     buttons = [
-        {"id": "cart_checkout", "title": "💳 Checkout"},
-        {"id": "cart_clear", "title": "🗑️ Clear Cart"},
-        {"id": "menu_main", "title": "🏠 Main Menu"}
+        {"id": "cart_checkout", "title": get_text(lang, "cart_checkout")},
+        {"id": "cart_clear", "title": get_text(lang, "cart_clear")},
+        {"id": "menu_main", "title": get_text(lang, "btn_main_menu")}
     ]
     await ctx.wa.send_reply_buttons(to, cart_text, buttons)
 
 
 async def handle_checkout_prompt(ctx: BotContext, to: str):
     """Instructs the user on how to complete their checkout and sets state."""
+    lang = await ctx.db.get_user_language(to)
     cart_items = await ctx.db.get_cart(to)
     if not cart_items:
-        await ctx.wa.send_text_message(to, "Your cart is empty. Please add items before checking out.")
+        await ctx.wa.send_text_message(to, get_text(lang, "no_items_to_checkout"))
         return
 
     await ctx.db.set_user_state(to, "checkout_pending")
-
-    instruction = (
-        "💳 *Checkout Instructions*\n\n"
-        "Please reply with your name and shipping address in the following format:\n\n"
-        "*Your Full Name, Your Shipping Address*\n\n"
-        "Example:\n"
-        "_John Doe, 123 Main Street, New York_\n\n"
-        "Or type *cancel* to go back."
-    )
-    await ctx.wa.send_text_message(to, instruction)
+    await ctx.wa.send_text_message(to, get_text(lang, "checkout_instruction"))
 
 
 async def handle_process_checkout(ctx: BotContext, to: str, text: str):
     """Parses name and address, then prompts customer for COD order confirmation."""
+    lang = await ctx.db.get_user_language(to)
     try:
         parts = text.split(",", 1)
         if len(parts) < 2:
@@ -164,17 +162,14 @@ async def handle_process_checkout(ctx: BotContext, to: str, text: str):
         if not name or not address:
             raise ValueError()
     except (ValueError, IndexError):
-        await ctx.wa.send_text_message(
-            to,
-            "⚠️ Invalid format.\n\nPlease reply like this:\n*Name, Full Address*\n\nOr type *cancel* to go back."
-        )
+        await ctx.wa.send_text_message(to, get_text(lang, "checkout_invalid_format"))
         return
 
     # Check cart is not empty
     cart_items = await ctx.db.get_cart(to)
     if not cart_items:
         await ctx.db.set_user_state(to, "idle")
-        await ctx.wa.send_text_message(to, "Your cart is empty. Browse products to start shopping!")
+        await ctx.wa.send_text_message(to, get_text(lang, "cart_empty_shop_start"))
         return
 
     # Calculate total for display
@@ -185,30 +180,27 @@ async def handle_process_checkout(ctx: BotContext, to: str, text: str):
     await ctx.db.set_user_state(to, confirm_state)
 
     confirm_text = (
-        f"📋 *Confirm your Cash on Delivery (COD) Order*\n\n"
-        f"Name: *{name}*\n"
-        f"Shipping Address:\n_{address}_\n\n"
-        f"Total Amount: *BDT {total:.2f}*\n"
-        f"Payment Method: *Cash on Delivery (COD)*\n\n"
-        f"Do you want to confirm and place this order?"
+        get_text(lang, "checkout_confirm_title")
+        + format_text(lang, "checkout_confirm_fields", name=name, address=address, total=total)
     )
 
     buttons = [
-        {"id": "checkout_place", "title": "👍 Confirm Order"},
-        {"id": "checkout_cancel", "title": "❌ Cancel"}
+        {"id": "checkout_place", "title": get_text(lang, "btn_confirm_order")},
+        {"id": "checkout_cancel", "title": get_text(lang, "btn_cancel")}
     ]
     await ctx.wa.send_reply_buttons(to, confirm_text, buttons)
 
 
 async def handle_place_order(ctx: BotContext, to: str, name: str, address: str):
     """Actually places the order in WooCommerce after customer confirmation."""
+    lang = await ctx.db.get_user_language(to)
     cart_items = await ctx.db.get_cart(to)
     if not cart_items:
         await ctx.db.set_user_state(to, "idle")
-        await ctx.wa.send_text_message(to, "Your cart is empty. Browse products to start shopping!")
+        await ctx.wa.send_text_message(to, get_text(lang, "cart_empty_shop_start"))
         return
 
-    await ctx.wa.send_text_message(to, "⏳ Placing your order, please wait...")
+    await ctx.wa.send_text_message(to, get_text(lang, "checkout_placing"))
 
     order = await ctx.wc.create_order(
         phone_number=to,
@@ -221,33 +213,32 @@ async def handle_place_order(ctx: BotContext, to: str, name: str, address: str):
     await ctx.db.set_user_state(to, "idle")
 
     if not order:
-        await ctx.wa.send_text_message(to, "❌ Failed to place order in our system. Please try again later.")
+        await ctx.wa.send_text_message(to, get_text(lang, "checkout_failed"))
         return
 
     await ctx.wc.create_order_note(order.get('id'), "Order placed by customer via WhatsApp Bot.")
     await ctx.db.cache_orders([order], to)
     await ctx.db.clear_cart(to)
 
-    success_text = (
-        f"🎉 *Order Placed Successfully!*\n\n"
-        f"Order ID: *#{order.get('id')}*\n"
-        f"Total Amount: *BDT {order.get('total')}*\n"
-        f"Payment Method: *{order.get('payment_method_title')}*\n\n"
-        f"We will ship your items to:\n_{address}_\n\n"
-        f"Thank you for shopping with us!"
+    success_text = format_text(lang, "checkout_success",
+        order_id=order.get('id'),
+        total=order.get('total'),
+        payment_method=order.get('payment_method_title'),
+        address=address,
     )
     buttons = [
-        {"id": "menu_orders", "title": "📦 View Orders"},
-        {"id": "menu_main", "title": "🏠 Main Menu"}
+        {"id": "menu_orders", "title": get_text(lang, "btn_view_orders")},
+        {"id": "menu_main", "title": get_text(lang, "btn_main_menu")}
     ]
     await ctx.wa.send_reply_buttons(to, success_text, buttons)
 
 
 async def handle_clear_cart(ctx: BotContext, to: str):
     """Clears the shopping cart."""
+    lang = await ctx.db.get_user_language(to)
     await ctx.db.clear_cart(to)
     buttons = [
-        {"id": "menu_categories", "title": "Browse Catalog"},
-        {"id": "menu_main", "title": "🏠 Main Menu"}
+        {"id": "menu_categories", "title": get_text(lang, "btn_browse_catalog")},
+        {"id": "menu_main", "title": get_text(lang, "btn_main_menu")}
     ]
-    await ctx.wa.send_reply_buttons(to, "🗑️ Your shopping cart has been cleared.", buttons)
+    await ctx.wa.send_reply_buttons(to, get_text(lang, "cart_cleared"), buttons)

@@ -94,6 +94,20 @@ class WooCommerceClient:
         url = f"{self.base_api_url}/products/{product_id}"
         return await self._request("GET", url)
 
+    async def get_product_by_sku(self, sku: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single product by its SKU code.
+
+        WooCommerce REST API supports ``?sku=XYZ`` on ``/products``.
+        Since SKUs are unique, this returns either 0 or 1 product.
+        Returns None when no product matches the SKU.
+        """
+        url = f"{self.base_api_url}/products"
+        params = {"sku": sku.strip(), "status": "publish"}
+        result = await self._request_list("GET", url, params=params)
+        if result and len(result) > 0:
+            return result[0]
+        return None
+
     async def search_products(self, query: str, page: int = 1, per_page: int = 10) -> List[Dict[str, Any]]:
         """Search products using WooCommerce search API."""
         url = f"{self.base_api_url}/products"

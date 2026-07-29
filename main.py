@@ -358,6 +358,39 @@ class BroadcastRequest(BaseModel):
     message: str
 
 
+class ChangeKeyRequest(BaseModel):
+    current_key: str
+    new_key: str
+
+
+@app.post("/api/admin/change-key")
+async def api_change_admin_key(request: Request, req: ChangeKeyRequest):
+    """Change the admin API key. Validates current key, then updates Supabase config and in-memory env var."""
+    if not verify_admin_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized. Provide a valid API key via ?api_key= or Authorization: Bearer header.")
+
+    current_key = os.getenv("ADMIN_API_KEY", "")
+
+    # Verify current key matches (extra safety — the request is already auth'd by verify_admin_auth)
+    if current_key and not hmac.compare_digest(req.current_key, current_key):
+        raise HTTPException(status_code=403, detail="Current API key is incorrect.")
+
+    if not req.new_key or len(req.new_key) < 8:
+        raise HTTPException(status_code=400, detail="New API key must be at least 8 characters long.")
+
+    # Update in Supabase config table
+    success = await db.set_app_config("ADMIN_API_KEY", req.new_key)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save new API key to database.")
+
+    # Update in-memory env var immediately (no restart needed)
+    os.environ["ADMIN_API_KEY"] = req.new_key
+
+    logger.info("Admin API key changed successfully via dashboard.")
+    return JSONResponse({"status": "ok", "message": "API key updated successfully. Your new key is active immediately."})
+
+
 @app.post("/api/broadcast")
 async def broadcast_message(request: Request, req: BroadcastRequest):
     """Sends a promotional message to all active users."""
@@ -431,16 +464,56 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
     # Log incoming webhook JSON for debugging
     logger.debug(f"Webhook received: {json.dumps(body)[:500]}")
 
-    # Check for statuses update (sent, delivered, read) to ignore
     entry = body.get("entry", [{}])[0]
     changes = entry.get("changes", [{}])[0]
     value = changes.get("value", {})
+    field = changes.get("field", "")
 
+    # ──────────────────────────────────────────────────
+    # GROUP INVITATION HANDLING
+    # ──────────────────────────────────────────────────
+    # When the bot is added to a WhatsApp group, Meta sends a webhook
+    # with field="group_participants_update" and a "groups" array.
+    # The bot auto-joins — no explicit accept needed — but we send a
+    # welcome message to acknowledge the invitation.
+    if field == "group_participants_update":
+        groups_data = value.get("groups", [])
+        for grp in groups_data:
+            if grp.get("type") == "group_participants_add":
+                group_id = grp.get("group_id", "")
+                added = grp.get("added_participants", [])
+                bot_wa_id = os.getenv("WHATSAPP_BOT_WA_ID", "")
+                was_bot_added = not bot_wa_id or any(
+                    p.get("wa_id", "") == bot_wa_id for p in added
+                )
+                if group_id and was_bot_added and ctx:
+                    logger.info(f"Bot was added to group {group_id}! Sending welcome message.")
+                    asyncio.create_task(
+                        ctx.wa.send_text_message(
+                            group_id,
+                            "👋 Hello everyone! Thanks for adding me. "
+                            "I'm the DEEN Commerce assistant — I can help with product browsing, "
+                            "orders, and more! Type *Menu* to get started.",
+                            recipient_type="group"
+                        )
+                    )
+        return JSONResponse({"status": "ok", "reason": "group_update"})
+
+    # ──────────────────────────────────────────────────
+    # STATUS / METADATA UPDATES
+    # ──────────────────────────────────────────────────
     if "messages" not in value:
         # Status update or metadata update, return 200 OK
         return JSONResponse({"status": "ignored"})
 
     message = value["messages"][0]
+
+    # ──────────────────────────────────────────────────
+    # GROUP MESSAGE DETECTION
+    # ──────────────────────────────────────────────────
+    # Messages sent within a group include a "group_id" field.
+    # We respond to these, but skip user DB operations for group messages.
+    from_number = message.get("from", "")
     from_number = message["from"]
 
     msg_id = message.get("id")

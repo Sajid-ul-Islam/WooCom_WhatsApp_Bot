@@ -43,11 +43,19 @@ class WhatsAppClient:
             logger.error(f"Failed to post message to WhatsApp Cloud API: {e}")
             return {"error": str(e)}
 
-    async def send_text_message(self, to: str, text: str) -> Dict[str, Any]:
-        """Send a standard text message."""
+    async def send_text_message(self, to: str, text: str, recipient_type: str = "individual") -> Dict[str, Any]:
+        """Send a standard text message.
+
+        Args:
+            to: Phone number (for individuals) or group ID (for groups).
+            text: Message body.
+            recipient_type: ``"individual"`` or ``"group"``. The API
+                auto-detects group IDs, but setting the correct type
+                avoids warnings from Meta.
+        """
         payload = {
             "messaging_product": "whatsapp",
-            "recipient_type": "individual",
+            "recipient_type": recipient_type,
             "to": to,
             "type": "text",
             "text": {

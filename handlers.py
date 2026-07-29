@@ -3,6 +3,7 @@ import asyncio
 import logging
 
 from context import BotContext
+from i18n import get_text
 
 # Import modularized handlers
 from shopping_handlers import (
@@ -13,6 +14,7 @@ from shopping_handlers import (
     handle_show_variations,
     handle_size_chart,
     handle_ai_search,
+    handle_sku_search,
     handle_recommend_for_you,
 )
 from cart_handlers import (
@@ -131,13 +133,15 @@ async def route_action(ctx: BotContext, to: str, action_id: str) -> bool:
                 await handle_place_order(ctx, to, parts[1], parts[2])
                 return True
         await ctx.db.set_user_state(to, "idle")
-        await ctx.wa.send_text_message(to, "❌ Session expired. Checkout cancelled.")
+        lang = await ctx.db.get_user_language(to)
+        await ctx.wa.send_text_message(to, get_text(lang, "session_expired"))
         await handle_main_menu(ctx, to)
         return True
 
     if action_id == "checkout_cancel":
+        lang = await ctx.db.get_user_language(to)
         await ctx.db.set_user_state(to, "idle")
-        await ctx.wa.send_text_message(to, "Order checkout cancelled.")
+        await ctx.wa.send_text_message(to, get_text(lang, "checkout_cancelled"))
         await handle_main_menu(ctx, to)
         return True
 
@@ -185,6 +189,15 @@ async def route_text(ctx: BotContext, to: str, text: str):
     # === 1. Exact keyword match ===
     if text_lower in TEXT_COMMANDS:
         await TEXT_COMMANDS[text_lower](ctx, to)
+        return
+
+    # === 1.5. SKU code detection ===
+    # SKUs are short alphanumeric codes (3-20 chars) with at least one letter AND one digit.
+    # This runs before Wit.ai and LLM to give a fast, direct product-lookup response.
+    sku_match = re.match(r"^[A-Za-z0-9][A-Za-z0-9_-]{2,19}$", text.strip())
+    if sku_match and re.search(r"[A-Za-z]", text) and re.search(r"[0-9]", text):
+        logger.info(f"Input '{text}' looks like an SKU — attempting SKU lookup.")
+        await handle_sku_search(ctx, to, text.strip())
         return
 
     # === 2. Regex pattern match ===
@@ -283,7 +296,8 @@ async def process_incoming_message(
             if text_lower in ["/resume", "resume", "resume bot"]:
                 await ctx.db.set_bot_paused(from_number, False)
                 await ctx.db.set_user_state(from_number, "idle")
-                await ctx.wa.send_text_message(from_number, "✅ Bot resumed. How can I help you?")
+                lang = await ctx.db.get_user_language(from_number)
+                await ctx.wa.send_text_message(from_number, get_text(lang, "bot_resumed"))
                 return
 
         is_paused = await ctx.db.is_bot_paused(from_number)
@@ -296,8 +310,9 @@ async def process_incoming_message(
 
         if incoming_text and incoming_text.lower() in ["cancel", "/cancel", "back", "abort"]:
             if user_state != "idle":
+                lang = await ctx.db.get_user_language(from_number)
                 await ctx.db.set_user_state(from_number, "idle")
-                await ctx.wa.send_text_message(from_number, "❌ Process cancelled.")
+                await ctx.wa.send_text_message(from_number, get_text(lang, "process_cancelled"))
                 await handle_main_menu(ctx, from_number)
                 return
 
@@ -321,7 +336,8 @@ async def process_incoming_message(
         if action_id:
             logger.info(f"Processing action '{action_id}' from {from_number}")
             if not await route_action(ctx, from_number, action_id):
-                await ctx.wa.send_text_message(from_number, "I didn't recognize that action. Returning to main menu.")
+                lang = await ctx.db.get_user_language(from_number)
+                await ctx.wa.send_text_message(from_number, get_text(lang, "action_not_recognized"))
                 await handle_main_menu(ctx, from_number)
 
         elif incoming_text:
@@ -338,7 +354,8 @@ async def process_incoming_message(
         if pending_id:
             asyncio.create_task(ctx.db.mark_pending_completed(pending_id, error=str(e)[:500]))
         try:
-            await ctx.wa.send_text_message(from_number, "Sorry, I had trouble processing that action. Returning to main menu.")
+            lang = await ctx.db.get_user_language(from_number)
+            await ctx.wa.send_text_message(from_number, get_text(lang, "unknown_error"))
             await handle_main_menu(ctx, from_number)
         except Exception as send_err:
             logger.error(f"Failed to send error message to {from_number}: {send_err}")

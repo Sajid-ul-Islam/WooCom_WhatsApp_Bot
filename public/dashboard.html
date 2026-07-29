@@ -3,853 +3,1054 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DEEN Commerce WhatsApp Bot Admin Dashboard</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <style>
-        .auth-overlay {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: var(--bg-color);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-        }
+    <title>DEEN Commerce · Admin Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+--bg:#080c16;
+--bg-card:rgba(255,255,255,0.025);
+--border:rgba(255,255,255,0.06);
+--border-hover:rgba(255,255,255,0.12);
+--text:#fff;
+--text-dim:#64748b;
+--text-muted:#94a3b8;
+--accent:#38bdf8;
+--accent-glow:rgba(56,189,248,0.12);
+--success:#10b981;
+--success-glow:rgba(16,185,129,0.12);
+--warning:#f59e0b;
+--danger:#ef4444;
+--purple:#a78bfa;
+--radius:14px;
+--radius-sm:8px;
+--radius-full:999px;
+--transition:0.25s cubic-bezier(0.4,0,0.2,1);
+}
+body{
+font-family:'Inter',sans-serif;
+background:var(--bg);
+color:var(--text);
+min-height:100vh;
+padding:1.5rem 2rem;
+position:relative;
+overflow-x:hidden;
+-webkit-font-smoothing:antialiased;
+}
 
-        .auth-card {
-            background: var(--card-bg);
-            backdrop-filter: blur(16px);
-            border: 1px solid var(--card-border);
-            border-radius: 16px;
-            padding: 2.5rem;
-            width: 100%;
-            max-width: 420px;
-            box-shadow: 0 4px 30px rgba(0,0,0,0.1);
-        }
+/* ── Animated BG ── */
+.bg-glow{position:fixed;border-radius:50%;z-index:-1;pointer-events:none}
+.bg-glow-1{top:-15%;left:-5%;width:55vw;height:55vw;background:radial-gradient(circle,rgba(139,92,246,0.12) 0%,transparent 70%);animation:pulseGlow 12s ease-in-out infinite alternate}
+.bg-glow-2{bottom:-15%;right:-5%;width:60vw;height:60vw;background:radial-gradient(circle,rgba(56,189,248,0.08) 0%,transparent 70%);animation:pulseGlow 10s ease-in-out infinite alternate-reverse}
+.bg-glow-3{top:40%;left:40%;width:40vw;height:40vw;background:radial-gradient(circle,rgba(16,185,129,0.04) 0%,transparent 70%);animation:pulseGlow 15s ease-in-out infinite alternate}
+@keyframes pulseGlow{0%{transform:scale(1);opacity:.6}100%{transform:scale(1.25);opacity:1}}
 
-        .auth-card h2 {
-            margin-bottom: 0.5rem;
-            font-size: 1.5rem;
-        }
+/* ── Scrollbar ── */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.15)}
 
-        .auth-card p {
-            color: var(--text-secondary);
-            margin-bottom: 1.5rem;
-            font-size: 0.875rem;
-        }
+/* ── Header ── */
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem;flex-wrap:wrap;gap:1rem}
+.header-left h1{
+font-size:1.75rem;font-weight:800;
+background:linear-gradient(135deg,#f8fafc 0%,#94a3b8 100%);
+-webkit-background-clip:text;-webkit-text-fill-color:transparent;
+letter-spacing:-0.02em;
+}
+.header-left p{color:var(--text-dim);font-size:0.875rem;margin-top:0.15rem}
 
-        .auth-input {
-            width: 100%;
-            padding: 0.75rem 1rem;
-            background: rgba(0,0,0,0.2);
-            border: 1px solid var(--card-border);
-            border-radius: 8px;
-            color: var(--text-primary);
-            font-family: inherit;
-            font-size: 1rem;
-            margin-bottom: 1rem;
-            outline: none;
-            transition: border-color 0.2s;
-        }
+.status-pill{
+display:flex;align-items:center;gap:0.5rem;
+font-size:0.8rem;color:var(--text-muted);
+background:var(--bg-card);padding:0.45rem 1rem;
+border-radius:var(--radius-full);
+border:1px solid var(--border);
+backdrop-filter:blur(12px);
+}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 8px var(--success);flex-shrink:0}
 
-        .auth-input:focus {
-            border-color: var(--accent-solid);
-        }
+/* ── Generic ── */
+.text-muted{color:var(--text-muted)}
+.text-dim{color:var(--text-dim)}
+.flex{display:flex}
+.gap-2{gap:0.5rem}.gap-3{gap:0.75rem}.gap-4{gap:1rem}
+.items-center{align-items:center}
+.justify-between{justify-content:space-between}
+.flex-wrap{flex-wrap:wrap}
+.flex-1{flex:1}
+.mb-2{margin-bottom:0.5rem}.mb-4{margin-bottom:1rem}.mb-6{margin-bottom:1.5rem}
+.mt-2{margin-top:0.5rem}.mt-4{margin-top:1rem}
 
-        .auth-btn {
-            width: 100%;
-            padding: 0.75rem;
-            background: var(--accent-solid);
-            color: #fff;
-            border: none;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 1rem;
-            cursor: pointer;
-            transition: opacity 0.2s;
-        }
+/* ── Auth Overlay ── */
+.auth-overlay{
+position:fixed;inset:0;
+background:var(--bg);
+display:flex;align-items:center;justify-content:center;
+z-index:1000;
+}
+.auth-card{
+background:var(--bg-card);backdrop-filter:blur(20px);
+border:1px solid var(--border);border-radius:20px;
+padding:2.5rem;width:100%;max-width:400px;
+box-shadow:0 8px 60px rgba(0,0,0,0.3);
+animation:fadeUp 0.4s ease;
+}
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+.auth-card h2{font-size:1.35rem;font-weight:700;margin-bottom:0.3rem}
+.auth-card p{color:var(--text-dim);font-size:0.85rem;margin-bottom:1.5rem}
+.auth-input{
+width:100%;padding:0.75rem 1rem;
+background:rgba(0,0,0,0.25);
+border:1px solid var(--border);border-radius:var(--radius-sm);
+color:var(--text);font-family:inherit;font-size:0.95rem;
+outline:none;transition:var(--transition);
+}
+.auth-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.auth-input::placeholder{color:var(--text-dim)}
+.auth-btn{
+width:100%;padding:0.75rem;
+background:var(--accent);color:#fff;
+border:none;border-radius:var(--radius-sm);
+font-weight:600;font-size:0.95rem;cursor:pointer;
+transition:var(--transition);position:relative;overflow:hidden;
+}
+.auth-btn:hover{opacity:.92;transform:translateY(-1px)}
+.auth-btn:active{transform:translateY(0)}
+.auth-error{color:var(--warning);font-size:0.85rem;margin-top:0.6rem;display:none}
 
-        .auth-btn:hover {
-            opacity: 0.9;
-        }
+/* ── Glass Card ── */
+.card{
+background:var(--bg-card);
+backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+border:1px solid var(--border);border-radius:var(--radius);
+padding:1.25rem 1.5rem;
+box-shadow:0 4px 30px rgba(0,0,0,0.08);
+transition:var(--transition);
+}
+.card:hover{border-color:var(--border-hover)}
+.card-static:hover{transform:none !important;border-color:var(--border) !important}
 
-        .auth-error {
-            color: var(--warning);
-            font-size: 0.875rem;
-            margin-top: 0.5rem;
-            display: none;
-        }
-        :root {
-            --bg-color: #0b0f19;
-            --card-bg: rgba(255, 255, 255, 0.03);
-            --card-border: rgba(255, 255, 255, 0.08);
-            --text-primary: #ffffff;
-            --text-secondary: #94a3b8;
-            --accent-glow: rgba(56, 189, 248, 0.15);
-            --accent-solid: #38bdf8;
-            --success: #10b981;
-            --warning: #f59e0b;
-        }
+/* ── Collapsible Card (Dropdown Toggle) ── */
+.card-collapsible .card-header{
+display:flex;align-items:center;justify-content:space-between;
+cursor:pointer;user-select:none;
+padding:0.25rem 0;
+}
+.card-collapsible .card-header:active{opacity:.7}
+.card-header-left{display:flex;align-items:center;gap:0.75rem}
+.card-header-title{font-size:1.1rem;font-weight:600}
+.toggle-chevron{
+width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+border-radius:50%;background:rgba(255,255,255,0.03);
+transition:var(--transition);flex-shrink:0;
+}
+.toggle-chevron svg{width:14px;height:14px;fill:none;stroke:var(--text-muted);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;transition:transform 0.3s ease}
+.card-collapsible.is-open .toggle-chevron svg{transform:rotate(180deg)}
+.card-collapsible:hover .toggle-chevron{background:rgba(255,255,255,0.07)}
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: 'Inter', sans-serif;
-        }
+.card-collapsible .card-body{
+overflow:hidden;max-height:0;opacity:0;
+transition:max-height 0.4s cubic-bezier(0.4,0,0.2,1),opacity 0.3s ease,margin 0.3s ease;
+margin-top:0;
+}
+.card-collapsible.is-open .card-body{
+max-height:2000px;opacity:1;
+margin-top:1rem;
+}
 
-        body {
-            background-color: var(--bg-color);
-            color: var(--text-primary);
-            min-height: 100vh;
-            padding: 2rem;
-            position: relative;
-            overflow-x: hidden;
-        }
+/* ── Stats ── */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:0}
+.stat-card{padding:1.25rem;position:relative;overflow:hidden}
+.stat-card .stat-icon{
+position:absolute;right:1rem;top:1rem;font-size:1.5rem;opacity:.15;
+}
+.stat-title{color:var(--text-dim);font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.06em}
+.stat-value{font-size:2rem;font-weight:700;margin-top:0.25rem}
+.stat-value .stat-unit{font-size:0.9rem;font-weight:400;color:var(--text-muted);margin-left:0.2rem}
+.stat-trend{font-size:0.75rem;margin-top:0.25rem;display:inline-flex;align-items:center;gap:0.25rem}
 
-        /* Animated Background Gradients */
-        .bg-glow-1 {
-            position: absolute;
-            top: -10%;
-            left: -10%;
-            width: 50vw;
-            height: 50vw;
-            background: radial-gradient(circle, rgba(139,92,246,0.15) 0%, rgba(0,0,0,0) 70%);
-            border-radius: 50%;
-            z-index: -1;
-            animation: pulse 10s infinite alternate;
-        }
+/* ── Tables ── */
+.tables-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:1.25rem}
+.table-container{overflow-x:auto;margin-top:0.5rem}
+table{width:100%;border-collapse:separate;border-spacing:0}
+th{
+text-align:left;padding:0.75rem 1rem;
+color:var(--text-dim);font-size:0.7rem;font-weight:600;
+text-transform:uppercase;letter-spacing:0.06em;
+border-bottom:1px solid var(--border);
+white-space:nowrap;
+}
+td{
+padding:0.7rem 1rem;font-size:0.85rem;
+border-bottom:1px solid rgba(255,255,255,0.02);
+color:var(--text);white-space:nowrap;
+}
+tr:last-child td{border-bottom:none}
+tr{transition:background-color 0.15s ease}
+tr:hover td{background:rgba(255,255,255,0.02)}
 
-        .bg-glow-2 {
-            position: absolute;
-            bottom: -10%;
-            right: -10%;
-            width: 60vw;
-            height: 60vw;
-            background: radial-gradient(circle, rgba(56,189,248,0.1) 0%, rgba(0,0,0,0) 70%);
-            border-radius: 50%;
-            z-index: -1;
-            animation: pulse 8s infinite alternate-reverse;
-        }
+/* ── Badges ── */
+.badge{
+display:inline-flex;align-items:center;gap:0.3rem;
+padding:0.2rem 0.55rem;border-radius:var(--radius-full);
+font-size:0.7rem;font-weight:600;white-space:nowrap;
+}
+.badge-success{background:rgba(16,185,129,0.08);color:#10b981;border:1px solid rgba(16,185,129,0.15)}
+.badge-warning{background:rgba(245,158,11,0.08);color:#f59e0b;border:1px solid rgba(245,158,11,0.15)}
+.badge-info{background:rgba(56,189,248,0.08);color:#38bdf8;border:1px solid rgba(56,189,248,0.15)}
+.badge-danger{background:rgba(239,68,68,0.08);color:#ef4444;border:1px solid rgba(239,68,68,0.15)}
+.badge-neutral{background:rgba(148,163,184,0.08);color:#94a3b8;border:1px solid rgba(148,163,184,0.15)}
 
-        @keyframes pulse {
-            0% { transform: scale(1); opacity: 0.8; }
-            100% { transform: scale(1.2); opacity: 1; }
-        }
+/* ── Buttons ── */
+.btn{
+display:inline-flex;align-items:center;justify-content:center;gap:0.4rem;
+padding:0.6rem 1.2rem;border:none;border-radius:var(--radius-sm);
+font-weight:600;font-size:0.85rem;cursor:pointer;
+transition:var(--transition);white-space:nowrap;
+position:relative;overflow:hidden;
+font-family:inherit;
+}
+.btn:active{transform:scale(0.97)}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{opacity:.9;box-shadow:0 4px 15px var(--accent-glow)}
+.btn-outline{
+background:transparent;color:var(--text-muted);
+border:1px solid var(--border);
+}
+.btn-outline:hover{background:rgba(255,255,255,0.03);border-color:var(--border-hover);color:var(--text)}
+.btn-ghost{background:transparent;color:var(--text-muted);padding:0.4rem 0.8rem}
+.btn-ghost:hover{background:rgba(255,255,255,0.04);color:var(--text)}
+.btn-sm{padding:0.4rem 0.8rem;font-size:0.78rem}
+.btn-icon{padding:0.5rem;border-radius:50%;width:34px;height:34px}
 
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 2rem;
-        }
+/* ── Inputs ── */
+.input{
+width:100%;padding:0.65rem 1rem;
+background:rgba(0,0,0,0.2);
+border:1px solid var(--border);border-radius:var(--radius-sm);
+color:var(--text);font-family:inherit;font-size:0.9rem;
+outline:none;transition:var(--transition);
+}
+.input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.input::placeholder{color:var(--text-dim)}
 
-        h1 {
-            font-weight: 700;
-            font-size: 2rem;
-            background: linear-gradient(to right, #fff, #94a3b8);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
+/* ── Chip / Quick Reply ── */
+.chip{
+display:inline-flex;align-items:center;gap:0.3rem;
+padding:0.35rem 0.75rem;border-radius:var(--radius-full);
+background:rgba(255,255,255,0.04);
+border:1px solid var(--border);
+color:var(--text-muted);font-size:0.78rem;cursor:pointer;
+transition:var(--transition);white-space:nowrap;
+}
+.chip:hover{background:rgba(56,189,248,0.08);border-color:rgba(56,189,248,0.2);color:var(--accent)}
+.chip:active{transform:scale(0.96)}
 
-        .status-indicator {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-size: 0.875rem;
-            color: var(--text-secondary);
-            background: var(--card-bg);
-            padding: 0.5rem 1rem;
-            border-radius: 999px;
-            border: 1px solid var(--card-border);
-        }
+/* ── Chat-style Fuzzy Search ── */
+.chat-container{
+background:rgba(0,0,0,0.15);
+border:1px solid var(--border);
+border-radius:12px;
+min-height:200px;max-height:400px;
+overflow-y:auto;padding:1rem;
+display:flex;flex-direction:column;gap:0.75rem;
+}
+.chat-msg{
+max-width:85%;padding:0.6rem 0.9rem;
+border-radius:12px;font-size:0.85rem;line-height:1.5;
+animation:fadeUp 0.25s ease;word-break:break-word;
+}
+.chat-msg-query{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px}
+.chat-msg-reply{align-self:flex-start;background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--text);border-bottom-left-radius:4px}
+.chat-msg-product{
+align-self:flex-start;
+background:var(--bg-card);border:1px solid var(--border);
+border-radius:12px;padding:0.75rem;
+display:flex;gap:0.75rem;align-items:start;
+max-width:95%;animation:fadeUp 0.3s ease;
+cursor:pointer;transition:var(--transition);
+}
+.chat-msg-product:hover{border-color:var(--accent);background:rgba(56,189,248,0.04)}
+.chat-msg-product img{width:40px;height:40px;border-radius:8px;object-fit:cover;flex-shrink:0}
+.chat-msg-product .prod-info{flex:1;min-width:0}
+.chat-msg-product .prod-name{font-weight:600;font-size:0.85rem}
+.chat-msg-product .prod-meta{font-size:0.75rem;color:var(--text-muted);margin-top:0.15rem}
+.chat-msg-product .prod-price{font-weight:600;color:var(--success);font-size:0.8rem}
+.chat-time{font-size:0.65rem;color:var(--text-dim);margin-top:0.2rem;opacity:0.6}
+.chat-msg-query .chat-time{color:rgba(255,255,255,0.5);text-align:right}
 
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background-color: var(--success);
-            box-shadow: 0 0 10px var(--success);
-        }
+/* Typing indicator */
+.typing-indicator{align-self:flex-start;display:flex;gap:0.35rem;padding:0.6rem 1rem;background:rgba(255,255,255,0.04);border-radius:12px;border:1px solid var(--border)}
+.typing-dot{width:6px;height:6px;border-radius:50%;background:var(--text-dim);animation:typingBounce 1.2s infinite}
+.typing-dot:nth-child(2){animation-delay:0.2s}
+.typing-dot:nth-child(3){animation-delay:0.4s}
+@keyframes typingBounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}
 
-        /* Glassmorphism Cards */
-        .card {
-            background: var(--card-bg);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid var(--card-border);
-            border-radius: 16px;
-            padding: 1.5rem;
-            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
+/* ── Toast ── */
+.toast-container{position:fixed;top:1.25rem;right:1.25rem;z-index:9999;display:flex;flex-direction:column;gap:0.6rem;pointer-events:none}
+.toast{
+display:flex;align-items:center;gap:0.75rem;
+padding:0.85rem 1.1rem;border-radius:12px;
+backdrop-filter:blur(20px);border:1px solid;
+box-shadow:0 8px 40px rgba(0,0,0,0.25);
+pointer-events:auto;
+animation:toastIn 0.35s cubic-bezier(0.4,0,0.2,1);
+max-width:380px;
+position:relative;
+overflow:hidden;
+}
+.toast-success{background:rgba(16,185,129,0.1);border-color:rgba(16,185,129,0.2)}
+.toast-warning{background:rgba(245,158,11,0.1);border-color:rgba(245,158,11,0.2)}
+.toast-error{background:rgba(239,68,68,0.1);border-color:rgba(239,68,68,0.2)}
+.toast-info{background:rgba(56,189,248,0.1);border-color:rgba(56,189,248,0.2)}
+.toast-icon{font-size:1.1rem;flex-shrink:0}
+.toast-text{font-size:0.85rem;flex:1}
+.toast-close{cursor:pointer;opacity:.4;transition:var(--transition);background:none;border:none;color:inherit;font-size:1rem;padding:0.2rem}
+.toast-close:hover{opacity:1}
+.toast-bar{position:absolute;bottom:0;left:0;height:2px;background:rgba(255,255,255,0.15);animation:toastBar linear forwards}
+.toast-success .toast-bar{background:var(--success)}
+.toast-warning .toast-bar{background:var(--warning)}
+.toast-error .toast-bar{background:var(--danger)}
+.toast-info .toast-bar{background:var(--accent)}
+@keyframes toastIn{from{opacity:0;transform:translateX(40px) scale(.95)}to{opacity:1;transform:translateX(0) scale(1)}}
+@keyframes toastBar{from{width:100%}to{width:0%}}
+.toast.toast-out{animation:toastOut 0.3s ease forwards}
+@keyframes toastOut{to{opacity:0;transform:translateX(40px) scale(.95)}}
 
-        .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 40px rgba(0, 0, 0, 0.2);
-            border-color: rgba(255, 255, 255, 0.15);
-        }
+/* ── Skeleton ── */
+.skeleton{background:linear-gradient(90deg,rgba(255,255,255,0.03) 25%,rgba(255,255,255,0.06) 50%,rgba(255,255,255,0.03) 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:6px}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 
-        /* Stats Grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1.5rem;
-            margin-bottom: 2rem;
-        }
+/* ── Empty State ── */
+.empty-state{text-align:center;padding:2rem 1rem;color:var(--text-dim)}
+.empty-state .empty-icon{font-size:2.5rem;margin-bottom:0.5rem;opacity:.4}
+.empty-state p{font-size:0.85rem}
 
-        .stat-card {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-        }
-
-        .stat-title {
-            color: var(--text-secondary);
-            font-size: 0.875rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .stat-value {
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: var(--text-primary);
-        }
-
-        /* Tables Grid */
-        .tables-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-            gap: 1.5rem;
-        }
-
-        .table-header {
-            font-size: 1.25rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-            color: var(--text-primary);
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: separate;
-            border-spacing: 0;
-        }
-
-        th {
-            text-align: left;
-            padding: 1rem;
-            color: var(--text-secondary);
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            border-bottom: 1px solid var(--card-border);
-        }
-
-        td {
-            padding: 1rem;
-            font-size: 0.875rem;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.02);
-            color: var(--text-primary);
-        }
-
-        tr:last-child td {
-            border-bottom: none;
-        }
-
-        tr {
-            transition: background-color 0.2s ease;
-        }
-
-        tr:hover td {
-            background-color: rgba(255, 255, 255, 0.02);
-        }
-
-        .badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 999px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            display: inline-block;
-        }
-
-        .badge-success { background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.2); }
-        .badge-warning { background: rgba(245, 158, 11, 0.1); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.2); }
-        .badge-info { background: rgba(56, 189, 248, 0.1); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.2); }
-
-        .loader {
-            border: 2px solid var(--card-border);
-            border-top: 2px solid var(--accent-solid);
-            border-radius: 50%;
-            width: 16px;
-            height: 16px;
-            animation: spin 1s linear infinite;
-            display: inline-block;
-            margin-left: 10px;
-            display: none;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .text-muted {
-            color: var(--text-secondary);
-        }
-    </style>
+/* ── Responsive ── */
+@media(max-width:768px){
+body{padding:1rem}
+header{flex-direction:column;align-items:stretch}
+.status-pill{align-self:flex-start}
+.stats-grid{grid-template-columns:1fr 1fr}
+.tables-grid{grid-template-columns:1fr}
+.chat-container{max-height:300px}
+}
+@media(max-width:480px){
+.stats-grid{grid-template-columns:1fr}
+.card{padding:1rem}
+}
+</style>
 </head>
 <body>
-    <!-- Auth Overlay -->
-    <div class="auth-overlay" id="auth-overlay">
-        <div class="auth-card">
-            <h2>🔐 Admin Authentication</h2>
-            <p>Enter your admin API key to access the dashboard.</p>
-            <input type="password" id="api-key-input" class="auth-input" placeholder="Enter your API key..." autocomplete="off">
-            <button class="auth-btn" onclick="submitApiKey()">Unlock Dashboard</button>
-            <div class="auth-error" id="auth-error">Invalid API key. Please try again.</div>
-        </div>
+
+<div class="bg-glow bg-glow-1"></div>
+<div class="bg-glow bg-glow-2"></div>
+<div class="bg-glow bg-glow-3"></div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- ═══ Auth Overlay ═══ -->
+<div class="auth-overlay" id="auth-overlay">
+  <div class="auth-card">
+    <div style="font-size:2.5rem;margin-bottom:0.75rem;text-align:center">🔐</div>
+    <h2 style="text-align:center">Admin Access</h2>
+    <p style="text-align:center">Enter your API key to unlock the dashboard.</p>
+    <input type="password" id="api-key-input" class="auth-input" placeholder="Paste your API key here..." autocomplete="off">
+    <button class="auth-btn" onclick="submitApiKey()">
+      <span>Unlock Dashboard</span>
+    </button>
+    <div class="auth-error" id="auth-error">Invalid API key. Please try again.</div>
+  </div>
+</div>
+
+<!-- ═══ HEADER ═══ -->
+<header>
+  <div class="header-left">
+    <h1>DEEN Commerce</h1>
+    <p>WhatsApp Bot · Real-time Admin Panel</p>
+  </div>
+  <div class="status-pill">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-label">Live</span>
+    <span style="opacity:.4">·</span>
+    <span id="status-uptime" style="font-size:.75rem">polling 5s</span>
+  </div>
+</header>
+
+<!-- ═══ STATS ROW ═══ -->
+<div class="stats-grid" style="margin-bottom:1.5rem">
+  <div class="card stat-card">
+    <div class="stat-icon">👥</div>
+    <div class="stat-title">Total Users</div>
+    <div class="stat-value" id="val-users-count">—</div>
+    <div class="stat-trend" id="users-trend" style="display:none"><span>●</span> <span id="users-trend-label"></span></div>
+  </div>
+  <div class="card stat-card">
+    <div class="stat-icon">🛒</div>
+    <div class="stat-title">Active Carts</div>
+    <div class="stat-value" id="val-carts-count">—</div>
+  </div>
+  <div class="card stat-card">
+    <div class="stat-icon">📦</div>
+    <div class="stat-title">Recent Orders</div>
+    <div class="stat-value" id="val-orders-count" style="font-size:1.5rem">—</div>
+  </div>
+  <div class="card stat-card" style="cursor:pointer" onclick="fetchStats();showToast('info','Stats refreshed','🔄')">
+    <div class="stat-icon">↻</div>
+    <div class="stat-title">Last Updated</div>
+    <div class="stat-value" id="val-last-updated" style="font-size:0.85rem;font-weight:400;color:var(--text-muted)">—</div>
+    <div class="stat-trend" style="color:var(--accent)">↻ Click to refresh</div>
+  </div>
+</div>
+
+<!-- ═══ AI CLASSIFICATION ═══ -->
+<div class="card card-collapsible is-open mb-4" id="card-wit">
+  <div class="card-header" onclick="toggleCard('card-wit')">
+    <div class="card-header-left">
+      <span class="toggle-chevron"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>
+      <span class="card-header-title">AI Classification</span>
+      <span id="wit-configured-badge" class="badge badge-info" style="font-size:0.65rem">checking…</span>
+    </div>
+  </div>
+  <div class="card-body">
+    <div id="wit-not-configured" style="display:none;padding:0.75rem 0;color:var(--warning);font-size:0.85rem">
+      ⚠️ Wit.ai not configured. Set <code style="color:var(--accent)">WIT_AI_SERVER_TOKEN</code> to enable.
+    </div>
+    <div id="wit-stats-content">
+      <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));margin-bottom:0.75rem">
+        <div><div class="stat-title">Total Calls</div><div class="stat-value" id="wit-total-calls" style="font-size:1.5rem">—</div></div>
+        <div><div class="stat-title">Success Rate</div><div class="stat-value" id="wit-success-rate" style="font-size:1.5rem;color:var(--success)">—</div></div>
+        <div><div class="stat-title">Calls / Min</div><div class="stat-value" id="wit-rpm" style="font-size:1.5rem">—</div></div>
+        <div><div class="stat-title">Last Classification</div><div class="stat-value" id="wit-last-text" style="font-size:0.8rem;font-weight:400">—</div></div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead><tr><th>Intent</th><th>Calls</th><th>Avg</th><th>Min</th><th>Max</th></tr></thead>
+          <tbody id="wit-intents-tbody"><tr><td colspan="5" class="text-muted" style="font-size:0.8rem">No classifications yet.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ CHAT-STYLE PRODUCT SEARCH ═══ -->
+<div class="card card-collapsible is-open mb-4" id="card-fuzzy">
+  <div class="card-header" onclick="toggleCard('card-fuzzy')">
+    <div class="card-header-left">
+      <span class="toggle-chevron"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>
+      <span class="card-header-title">Product Search</span>
+      <span id="fuzzy-index-badge" class="badge badge-info" style="font-size:0.65rem">checking…</span>
+    </div>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-4" style="font-size:0.85rem">Test fuzzy product search — results appear as chat messages below.</p>
+
+    <!-- Input row -->
+    <div class="flex gap-3 items-center mb-4 flex-wrap">
+      <input type="text" id="fuzzy-query" class="input flex-1" style="min-width:180px" placeholder="e.g. red shirt XL, panjabi under 500…" onkeydown="if(event.key==='Enter')runFuzzySearch()">
+      <button class="btn btn-primary" onclick="runFuzzySearch()">🔍 Search</button>
+      <button class="btn btn-ghost btn-sm" onclick="clearChat()" title="Clear chat">🗑️</button>
     </div>
 
-    <div class="bg-glow-1"></div>
-    <div class="bg-glow-2"></div>
-
-    <header>
-        <div>
-            <h1>Admin Dashboard</h1>
-            <p class="text-muted">Real-time WhatsApp Bot Metrics</p>
-        </div>
-        <div class="status-indicator">
-            <div class="status-dot"></div>
-            Live Monitoring <div class="loader" id="loader"></div>
-        </div>
-    </header>
-
-    <div class="stats-grid">
-        <div class="card stat-card">
-            <div class="stat-title">Total Users</div>
-            <div class="stat-value" id="val-users-count">-</div>
-        </div>
-        <div class="card stat-card">
-            <div class="stat-title">Active Shopping Carts</div>
-            <div class="stat-value" id="val-carts-count">-</div>
-        </div>
+    <!-- Quick reply chips -->
+    <div class="flex gap-2 flex-wrap mb-4">
+      <span class="chip" onclick="setQuery('panjabi')">🇧🇩 panjabi</span>
+      <span class="chip" onclick="setQuery('shirt')">👔 shirt</span>
+      <span class="chip" onclick="setQuery('under 1000')">💰 under 1000</span>
+      <span class="chip" onclick="setQuery('XL')">📏 XL</span>
+      <span class="chip" onclick="setQuery('black')">⚫ black</span>
+      <span class="chip" onclick="setQuery('latest')">✨ latest</span>
     </div>
 
-    <!-- Wit.ai Stats -->
-    <div class="card" style="margin-bottom: 2rem;">
-        <div class="table-header">
-            AI Classification 🤖
-            <span id="wit-configured-badge" class="badge badge-info" style="margin-left: 0.75rem; font-size: 0.7rem;">checking...</span>
-        </div>
-        <div id="wit-stats-content">
-            <div class="stats-grid" style="margin-bottom: 0;">
-                <div class="stat-card">
-                    <div class="stat-title">Total Calls</div>
-                    <div class="stat-value" id="wit-total-calls" style="font-size: 1.8rem;">-</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-title">Success Rate</div>
-                    <div class="stat-value" id="wit-success-rate" style="font-size: 1.8rem; color: var(--success);">-</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-title">Calls / Min</div>
-                    <div class="stat-value" id="wit-rpm" style="font-size: 1.8rem;">-</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-title">Last Classification</div>
-                    <div class="stat-value" id="wit-last-text" style="font-size: 0.9rem; font-weight: 400;">-</div>
-                </div>
-            </div>
-            <div style="overflow-x: auto; margin-top: 1rem;">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Intent</th>
-                            <th>Calls</th>
-                            <th>Avg Confidence</th>
-                            <th>Min</th>
-                            <th>Max</th>
-                        </tr>
-                    </thead>
-                    <tbody id="wit-intents-tbody">
-                        <tr><td colspan="5" class="text-muted">No classifications yet.</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        <div id="wit-not-configured" style="display: none; padding: 1rem; color: var(--warning);">
-            ⚠️ Wit.ai is not configured. Set <code>WIT_AI_SERVER_TOKEN</code> to enable.
-        </div>
+    <!-- Chat Messages -->
+    <div class="chat-container" id="chat-container">
+      <div class="chat-msg chat-msg-reply">
+        👋 Ask me anything about our products! Try the quick chips above or type your own query.
+        <div class="chat-time">Just now</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ BROADCAST CENTER ═══ -->
+<div class="card card-collapsible mb-4" id="card-broadcast">
+  <div class="card-header" onclick="toggleCard('card-broadcast')">
+    <div class="card-header-left">
+      <span class="toggle-chevron"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>
+      <span class="card-header-title">Broadcast Center</span>
+    </div>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-4" style="font-size:0.85rem">Send a promotional message to all active users <span class="badge badge-warning" style="font-size:0.65rem">capped at 50</span></p>
+    <textarea id="broadcast-msg" rows="3" class="input" style="resize:vertical;min-height:80px;margin-bottom:0.75rem" placeholder="Type your promotional message here…"></textarea>
+    <div class="flex gap-3 items-center flex-wrap">
+      <button class="btn btn-primary" onclick="sendBroadcast()">📢 Send Broadcast</button>
+      <span id="broadcast-status" style="font-size:0.85rem;color:var(--text-muted)"></span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ CHANGE API KEY ═══ -->
+<div class="card card-collapsible mb-4" id="card-change-key">
+  <div class="card-header" onclick="toggleCard('card-change-key')">
+    <div class="card-header-left">
+      <span class="toggle-chevron"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>
+      <span class="card-header-title">🔑 Change API Key</span>
+    </div>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-4" style="font-size:0.85rem">Update the admin API key. Changes take effect immediately — no restart needed.</p>
+
+    <div class="flex gap-3 flex-wrap" style="flex-direction:column">
+      <input type="password" id="key-current" class="input" style="max-width:400px" placeholder="Current API key" autocomplete="off">
+      <input type="password" id="key-new" class="input" style="max-width:400px" placeholder="New API key (min 8 characters)" autocomplete="off">
+      <input type="password" id="key-confirm" class="input" style="max-width:400px" placeholder="Confirm new API key" autocomplete="off">
+      <div class="flex gap-3 items-center flex-wrap">
+        <button class="btn btn-primary" onclick="changeApiKey()">🔑 Update Key</button>
+        <span id="change-key-status" style="font-size:0.85rem;color:var(--text-muted)"></span>
+      </div>
     </div>
 
-    <!-- Fuzzy Search Tester -->
-    <div class="card" style="margin-bottom: 2rem;">
-        <div class="table-header">
-            Fuzzy Product Search 🔍
-            <span id="fuzzy-index-badge" class="badge badge-info" style="margin-left: 0.75rem; font-size: 0.7rem;">checking...</span>
-        </div>
-        <p class="text-muted" style="margin-bottom: 1rem; font-size: 0.875rem;">Preview fuzzy search results — test queries like product names, prices, sizes, or categories.</p>
-        <div style="display: flex; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap;">
-            <input type="text" id="fuzzy-query" class="auth-input" style="margin-bottom: 0; flex: 1; min-width: 200px;" placeholder="Search products... (e.g. 'red shirt XL', 'panjabi under 500', 'large')" onkeypress="if(event.key==='Enter') runFuzzySearch()">
-            <button onclick="runFuzzySearch()" style="background: var(--accent-solid); color: #fff; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; font-weight: 600; cursor: pointer; white-space: nowrap;">Search</button>
-        </div>
-        <div id="fuzzy-results" style="display: none;">
-            <div style="overflow-x: auto;">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Score</th>
-                            <th>Image</th>
-                            <th>Product</th>
-                            <th>Price</th>
-                            <th>Categories</th>
-                            <th>Sizes</th>
-                            <th>Link</th>
-                        </tr>
-                    </thead>
-                    <tbody id="fuzzy-tbody">
-                    </tbody>
-                </table>
-            </div>
-            <p id="fuzzy-count" class="text-muted" style="margin-top: 0.75rem; font-size: 0.8rem;"></p>
-        </div>
-        <div id="fuzzy-empty" style="display: none; padding: 1.5rem; text-align: center; color: var(--text-secondary);">
-            No results found. Try a different query.
-        </div>
+    <div style="margin-top:1rem;padding:0.75rem 1rem;background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.12);border-radius:var(--radius-sm);font-size:0.8rem;color:var(--warning)">
+      ⚠️ After changing the key, you will need to re-authenticate with the new key. Save it somewhere safe before clicking Update.
     </div>
+  </div>
+</div>
 
-    <div class="card" style="margin-bottom: 2rem;">
-        <div class="table-header">Broadcast Center 📢</div>
-        <p class="text-muted" style="margin-bottom: 1rem; font-size: 0.875rem;">Send a promotional message to all active users (capped at 50 for safety).</p>
-        <textarea id="broadcast-msg" rows="4" placeholder="Enter your promotional message here..." style="width: 100%; padding: 1rem; background: rgba(0,0,0,0.2); border: 1px solid var(--card-border); border-radius: 8px; color: var(--text-primary); margin-bottom: 1rem; font-family: inherit; resize: vertical;"></textarea>
-        <button onclick="sendBroadcast()" style="background: var(--accent-solid); color: #fff; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; font-weight: 600; cursor: pointer; transition: background 0.2s;">Send Broadcast</button>
-        <span id="broadcast-status" style="margin-left: 1rem; font-size: 0.875rem; color: var(--success);"></span>
+<!-- ═══ TABLES ═══ -->
+<div class="tables-grid">
+  <!-- Users -->
+  <div class="card card-collapsible is-open" id="card-users">
+    <div class="card-header" onclick="toggleCard('card-users')">
+      <div class="card-header-left">
+        <span class="toggle-chevron"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>
+        <span class="card-header-title">Recent Users</span>
+        <span class="badge badge-info" id="users-count-badge" style="font-size:0.65rem">0</span>
+      </div>
     </div>
-
-    <div class="tables-grid">
-        <!-- Recent Users Table -->
-        <div class="card">
-            <div class="table-header">
-                Recent Users
-            </div>
-            <div style="overflow-x: auto;">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Phone Number</th>
-                            <th>Name</th>
-                            <th>State</th>
-                            <th>Bot Status</th>
-                            <th>Last Active</th>
-                        </tr>
-                    </thead>
-                    <tbody id="users-tbody">
-                        <tr><td colspan="5" class="text-muted text-center">Loading...</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Recent Orders Table -->
-        <div class="card">
-            <div class="table-header">
-                Recent Orders
-            </div>
-            <div style="overflow-x: auto;">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Order ID</th>
-                            <th>Phone Number</th>
-                            <th>Status</th>
-                            <th>Total</th>
-                            <th>Date</th>
-                        </tr>
-                    </thead>
-                    <tbody id="orders-tbody">
-                        <tr><td colspan="5" class="text-muted text-center">Loading...</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
+    <div class="card-body">
+      <div class="table-container">
+        <table><thead><tr><th>Phone</th><th>Name</th><th>State</th><th>Bot</th><th>Active</th></tr></thead>
+          <tbody id="users-tbody"><tr><td colspan="5" class="text-muted" style="font-size:0.8rem;text-align:center">Loading…</td></tr></tbody>
+        </table>
+      </div>
     </div>
+  </div>
 
-    <script>
-        // ---- API Key Auth ----
-        let API_KEY = sessionStorage.getItem('dashboard_api_key') || '';
+  <!-- Orders -->
+  <div class="card card-collapsible is-open" id="card-orders">
+    <div class="card-header" onclick="toggleCard('card-orders')">
+      <div class="card-header-left">
+        <span class="toggle-chevron"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>
+        <span class="card-header-title">Recent Orders</span>
+        <span class="badge badge-info" id="orders-count-badge" style="font-size:0.65rem">0</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="table-container">
+        <table><thead><tr><th>Order</th><th>Phone</th><th>Status</th><th>Total</th><th>Date</th></tr></thead>
+          <tbody id="orders-tbody"><tr><td colspan="5" class="text-muted" style="font-size:0.8rem;text-align:center">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
 
-        const showAuthOverlay = () => {
-            document.getElementById('auth-overlay').style.display = 'flex';
-        };
+<script>
+// ══════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════
+let API_KEY = sessionStorage.getItem('dashboard_api_key') || '';
+let _prevUsers = 0;
+let _prevCarts = 0;
 
-        const hideAuthOverlay = () => {
-            document.getElementById('auth-overlay').style.display = 'none';
-        };
+// ══════════════════════════════════════════════════
+// TOAST SYSTEM
+// ══════════════════════════════════════════════════
+function showToast(type, message, icon) {
+  const container = document.getElementById('toast-container');
+  const t = document.createElement('div');
+  t.className = `toast toast-${type}`;
+  t.innerHTML = `
+    <span class="toast-icon">${icon || (type==='success'?'✅':type==='warning'?'⚠️':type==='error'?'❌':'ℹ️')}</span>
+    <span class="toast-text">${escapeHtml(message)}</span>
+    <button class="toast-close" onclick="this.parentElement.remove()">✕</button>
+    <div class="toast-bar" style="animation-duration:4s"></div>
+  `;
+  container.appendChild(t);
+  setTimeout(() => { t.classList.add('toast-out'); setTimeout(() => t.remove(), 300); }, 4000);
+}
 
-        const submitApiKey = () => {
-            const key = document.getElementById('api-key-input').value.trim();
-            if (!key) {
-                document.getElementById('auth-error').style.display = 'block';
-                return;
-            }
-            // Test the key by making a request
-            fetch(`/api/dashboard-stats?api_key=${encodeURIComponent(key)}`)
-                .then(res => {
-                    if (res.status === 401) {
-                        document.getElementById('auth-error').style.display = 'block';
-                        document.getElementById('auth-error').textContent = 'Invalid API key. Please try again.';
-                        throw new Error('Unauthorized');
-                    }
-                    if (!res.ok) throw new Error('Server error');
-                    return res.json();
-                })
-                .then(data => {
-                    API_KEY = key;
-                    sessionStorage.setItem('dashboard_api_key', key);
-                    hideAuthOverlay();
-                    renderDashboard(data);
-                })
-                .catch(err => {
-                    if (err.message !== 'Unauthorized') {
-                        document.getElementById('auth-error').style.display = 'block';
-                        document.getElementById('auth-error').textContent = 'Could not connect to server.';
-                    }
-                });
-        };
+// ══════════════════════════════════════════════════
+// COLLAPSIBLE CARDS (Dropdown Toggle)
+// ══════════════════════════════════════════════════
+function toggleCard(cardId) {
+  const card = document.getElementById(cardId);
+  if (!card) return;
+  const isOpen = card.classList.contains('is-open');
+  card.classList.toggle('is-open');
+  sessionStorage.setItem('card-' + cardId, isOpen ? 'closed' : 'open');
+}
 
-        // Allow Enter key to submit
-        document.addEventListener('DOMContentLoaded', () => {
-            const input = document.getElementById('api-key-input');
-            if (input) {
-                input.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter') submitApiKey();
-                });
-            }
-        });
+function restoreCardStates() {
+  document.querySelectorAll('.card-collapsible').forEach(c => {
+    const key = 'card-' + c.id;
+    const state = sessionStorage.getItem(key);
+    if (state === 'closed') c.classList.remove('is-open');
+    else if (state === 'open') c.classList.add('is-open');
+  });
+}
 
-        const apiUrl = (path) => {
-            const sep = path.includes('?') ? '&' : '?';
-            return `${path}${sep}api_key=${encodeURIComponent(API_KEY)}`;
-        };
+// ══════════════════════════════════════════════════
+// AUTH
+// ══════════════════════════════════════════════════
+function showAuth() { document.getElementById('auth-overlay').style.display = 'flex'; }
+function hideAuth() { document.getElementById('auth-overlay').style.display = 'none'; }
 
-        const formatTimeAgo = (dateString) => {
-            if (!dateString) return 'N/A';
-            const date = new Date(dateString);
-            const now = new Date();
-            const diffMs = now - date;
-            const diffMins = Math.floor(diffMs / 60000);
-            
-            if (diffMins < 1) return 'Just now';
-            if (diffMins < 60) return `${diffMins}m ago`;
-            const diffHrs = Math.floor(diffMins / 60);
-            if (diffHrs < 24) return `${diffHrs}h ago`;
-            return `${Math.floor(diffHrs / 24)}d ago`;
-        };
+function submitApiKey() {
+  const key = document.getElementById('api-key-input').value.trim();
+  const errEl = document.getElementById('auth-error');
+  if (!key) { errEl.style.display = 'block'; return; }
+  errEl.style.display = 'none';
 
-        const renderDashboard = (data) => {
-            // Update Overview Stats
-            document.getElementById('val-users-count').innerText = data.users_count || 0;
-            document.getElementById('val-carts-count').innerText = data.carts_count || 0;
+  fetch(`/api/dashboard-stats?api_key=${encodeURIComponent(key)}`)
+    .then(r => {
+      if (r.status === 401) { errEl.textContent = 'Invalid API key. Please try again.'; errEl.style.display = 'block'; throw new Error('Unauthorized'); }
+      if (!r.ok) throw new Error('Server error');
+      return r.json();
+    })
+    .then(data => {
+      API_KEY = key;
+      sessionStorage.setItem('dashboard_api_key', key);
+      hideAuth();
+      restoreCardStates();
+      fetchStats();
+      checkFuzzyIndex();
+      showToast('success', 'Dashboard unlocked!');
+    })
+    .catch(err => { if (err.message !== 'Unauthorized') { errEl.textContent = 'Could not connect to server.'; errEl.style.display = 'block'; } });
+}
 
-            // Render Users Table
-            const usersTbody = document.getElementById('users-tbody');
-            if (data.users && data.users.length > 0) {
-                usersTbody.innerHTML = data.users.map(u => {
-                    const botBadge = u.bot_paused 
-                        ? '<span class="badge badge-warning">Paused</span>' 
-                        : '<span class="badge badge-success">Active</span>';
-                    const stateBadge = `<span class="badge badge-info">${u.state || 'idle'}</span>`;
-                    
-                    return `
-                        <tr>
-                            <td>${u.phone_number}</td>
-                            <td>${u.first_name || 'Customer'}</td>
-                            <td>${stateBadge}</td>
-                            <td>${botBadge}</td>
-                            <td>${formatTimeAgo(u.last_active)}</td>
-                        </tr>
-                    `;
-                }).join('');
-            } else {
-                usersTbody.innerHTML = '<tr><td colspan="5" class="text-muted">No recent users found.</td></tr>';
-            }
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('api-key-input')?.addEventListener('keydown', e => { if (e.key === 'Enter') submitApiKey(); });
+});
 
-            // Render Orders Table
-            const ordersTbody = document.getElementById('orders-tbody');
-            if (data.orders && data.orders.length > 0) {
-                ordersTbody.innerHTML = data.orders.map(o => {
-                    let statusClass = 'badge-info';
-                    if (o.status === 'completed' || o.status === 'processing') statusClass = 'badge-success';
-                    if (o.status === 'cancelled' || o.status === 'failed') statusClass = 'badge-warning';
-                    
-                    return `
-                        <tr>
-                            <td>#${o.id}</td>
-                            <td>${o.phone_number}</td>
-                            <td><span class="badge ${statusClass}">${o.status}</span></td>
-                            <td>$${parseFloat(o.total).toFixed(2)}</td>
-                            <td>${formatTimeAgo(o.created_at)}</td>
-                        </tr>
-                    `;
-                }).join('');
-            } else {
-                ordersTbody.innerHTML = '<tr><td colspan="5" class="text-muted">No recent orders found.</td></tr>';
-            }
-        };
+// ══════════════════════════════════════════════════
+// API HELPER
+// ══════════════════════════════════════════════════
+function apiUrl(path) {
+  const sep = path.includes('?') ? '&' : '?';
+  return `${path}${sep}api_key=${encodeURIComponent(API_KEY)}`;
+}
 
-        const fetchStats = async () => {
-            if (!API_KEY) {
-                showAuthOverlay();
-                return;
-            }
-            const loader = document.getElementById('loader');
-            loader.style.display = 'inline-block';
-            try {
-                const [statsRes, witRes] = await Promise.all([
-                    fetch(apiUrl('/api/dashboard-stats')),
-                    fetch(apiUrl('/api/wit-stats'))
-                ]);
-                if (statsRes.status === 401 || witRes.status === 401) {
-                    sessionStorage.removeItem('dashboard_api_key');
-                    API_KEY = '';
-                    showAuthOverlay();
-                    return;
-                }
-                const statsData = await statsRes.json();
-                const witData = await witRes.json();
-                renderDashboard(statsData);
-                renderWitStats(witData);
-            } catch (err) {
-                console.error('Failed to fetch dashboard stats', err);
-            } finally {
-                loader.style.display = 'none';
-            }
-        };
+// ══════════════════════════════════════════════════
+// FORMATTING
+// ══════════════════════════════════════════════════
+function escapeHtml(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
-        const renderWitStats = (data) => {
-            const badge = document.getElementById('wit-configured-badge');
-            const notConfigured = document.getElementById('wit-not-configured');
-            const content = document.getElementById('wit-stats-content');
+function timeAgo(dateStr) {
+  if (!dateStr) return 'N/A';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'Just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
-            if (!data.configured) {
-                badge.textContent = 'Not configured';
-                badge.className = 'badge badge-warning';
-                notConfigured.style.display = 'block';
-                content.style.display = 'none';
-                return;
-            }
+function maskPhone(p) {
+  if (!p) return '—';
+  if (p.length < 8) return p;
+  return p.slice(0, 3) + ' **** ' + p.slice(-3);
+}
 
-            badge.textContent = 'Active';
-            badge.className = 'badge badge-success';
-            notConfigured.style.display = 'none';
-            content.style.display = 'block';
+// ══════════════════════════════════════════════════
+// DASHBOARD RENDER
+// ══════════════════════════════════════════════════
+function renderDashboard(data) {
+  const usersCount = data.users_count || 0;
+  const cartsCount = data.carts_count || 0;
 
-            document.getElementById('wit-total-calls').textContent = data.total_calls || 0;
-            document.getElementById('wit-success-rate').textContent = (data.success_rate * 100).toFixed(1) + '%';
-            document.getElementById('wit-rpm').textContent = data.calls_per_minute || 0;
+  // Animate count changes
+  animateNumber('val-users-count', usersCount);
+  animateNumber('val-carts-count', cartsCount);
 
-            // Last classification
-            const last = data.last_classification;
-            const lastEl = document.getElementById('wit-last-text');
-            if (last && last.text) {
-                const intentName = last.intents?.[0]?.name || '?';
-                const confidence = last.intents?.[0]?.confidence || 0;
-                lastEl.innerHTML = `<span class="text-muted">"${escapeHtml(last.text)}" → </span><strong>${intentName}</strong> (${(confidence * 100).toFixed(0)}%)`;
-            } else {
-                lastEl.textContent = '- No classifications yet';
-            }
+  // Trend indicators
+  if (_prevUsers && usersCount !== _prevUsers) {
+    const trend = document.getElementById('users-trend');
+    trend.style.display = 'inline-flex';
+    const diff = usersCount - _prevUsers;
+    document.getElementById('users-trend-label').textContent = (diff > 0 ? '+' : '') + diff + ' new';
+    trend.style.color = diff > 0 ? 'var(--success)' : 'var(--text-muted)';
+  }
+  _prevUsers = usersCount;
 
-            // Intent breakdown table
-            const tbody = document.getElementById('wit-intents-tbody');
-            const intents = data.intents || {};
-            const keys = Object.keys(intents);
-            if (keys.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" class="text-muted">No classifications yet.</td></tr>';
-            } else {
-                tbody.innerHTML = keys.map(name => {
-                    const i = intents[name];
-                    return `
-                        <tr>
-                            <td><strong>${escapeHtml(name)}</strong></td>
-                            <td>${i.count}</td>
-                            <td>${(i.avg_confidence * 100).toFixed(0)}%</td>
-                            <td>${(i.min_confidence * 100).toFixed(0)}%</td>
-                            <td>${(i.max_confidence * 100).toFixed(0)}%</td>
-                        </tr>
-                    `;
-                }).join('');
-            }
-        };
+  // Orders count
+  document.getElementById('val-orders-count').textContent = (data.orders && data.orders.length) || 0;
+  document.getElementById('val-last-updated').textContent = new Date().toLocaleTimeString();
 
-        const escapeHtml = (str) => {
-            const div = document.createElement('div');
-            div.textContent = str;
-            return div.innerHTML;
-        };
+  // Count badges
+  document.getElementById('users-count-badge').textContent = data.users ? data.users.length : 0;
+  document.getElementById('orders-count-badge').textContent = data.orders ? data.orders.length : 0;
 
-        // ---- Fuzzy Search Tester ----
-        const runFuzzySearch = async () => {
-            if (!API_KEY) { showAuthOverlay(); return; }
-            const q = document.getElementById('fuzzy-query').value.trim();
-            const resultsDiv = document.getElementById('fuzzy-results');
-            const emptyDiv = document.getElementById('fuzzy-empty');
-            const tbody = document.getElementById('fuzzy-tbody');
-            const countEl = document.getElementById('fuzzy-count');
+  // Users table
+  const usersTbody = document.getElementById('users-tbody');
+  if (data.users && data.users.length) {
+    usersTbody.innerHTML = data.users.map(u => {
+      const botBadge = u.bot_paused ? '<span class="badge badge-warning">⏸ Paused</span>' : '<span class="badge badge-success">● Active</span>';
+      const stateBadge = `<span class="badge badge-neutral">${escapeHtml(u.state || 'idle')}</span>`;
+      return `<tr>
+        <td title="${escapeHtml(u.phone_number)}">${maskPhone(u.phone_number)}</td>
+        <td>${escapeHtml(u.first_name || 'Customer')}</td>
+        <td>${stateBadge}</td>
+        <td>${botBadge}</td>
+        <td style="font-size:0.78rem;color:var(--text-muted)">${timeAgo(u.last_active)}</td>
+      </tr>`;
+    }).join('');
+  } else {
+    usersTbody.innerHTML = '<tr><td colspan="5" class="text-muted" style="font-size:0.8rem;text-align:center">No users found.</td></tr>';
+  }
 
-            if (!q) {
-                resultsDiv.style.display = 'none';
-                emptyDiv.style.display = 'block';
-                emptyDiv.textContent = 'Type a search query to preview results.';
-                return;
-            }
+  // Orders table
+  const ordersTbody = document.getElementById('orders-tbody');
+  if (data.orders && data.orders.length) {
+    ordersTbody.innerHTML = data.orders.map(o => {
+      let cls = 'badge-info';
+      if (o.status === 'completed' || o.status === 'processing') cls = 'badge-success';
+      if (o.status === 'cancelled' || o.status === 'failed') cls = 'badge-warning';
+      return `<tr>
+        <td><span style="font-weight:600">#${o.id}</span></td>
+        <td style="font-size:0.78rem">${maskPhone(o.phone_number)}</td>
+        <td><span class="badge ${cls}">${escapeHtml(o.status)}</span></td>
+        <td style="font-weight:600;color:var(--success)">$${parseFloat(o.total || 0).toFixed(2)}</td>
+        <td style="font-size:0.78rem;color:var(--text-muted)">${timeAgo(o.created_at)}</td>
+      </tr>`;
+    }).join('');
+  } else {
+    ordersTbody.innerHTML = '<tr><td colspan="5" class="text-muted" style="font-size:0.8rem;text-align:center">No orders found.</td></tr>';
+  }
+}
 
-            tbody.innerHTML = '<tr><td colspan="7" class="text-muted">Searching...</td></tr>';
-            resultsDiv.style.display = 'block';
-            emptyDiv.style.display = 'none';
+function animateNumber(elId, target) {
+  const el = document.getElementById(elId);
+  const current = parseInt(el.textContent) || 0;
+  if (current === target) return;
+  const step = target > current ? 1 : -1;
+  let val = current;
+  const interval = setInterval(() => {
+    val += step;
+    el.textContent = val;
+    if (val === target) clearInterval(interval);
+  }, 30);
+}
 
-            try {
-                const res = await fetch(apiUrl(`/api/fuzzy-search?q=${encodeURIComponent(q)}&limit=10`));
-                if (res.status === 401) {
-                    sessionStorage.removeItem('dashboard_api_key');
-                    API_KEY = '';
-                    showAuthOverlay();
-                    return;
-                }
-                const data = await res.json();
+// ══════════════════════════════════════════════════
+// WIT STATS
+// ══════════════════════════════════════════════════
+function renderWitStats(data) {
+  const badge = document.getElementById('wit-configured-badge');
+  const notCfg = document.getElementById('wit-not-configured');
+  const content = document.getElementById('wit-stats-content');
+  if (!data.configured) {
+    badge.textContent = 'Off'; badge.className = 'badge badge-warning';
+    notCfg.style.display = 'block'; content.style.display = 'none'; return;
+  }
+  badge.textContent = 'Active'; badge.className = 'badge badge-success';
+  notCfg.style.display = 'none'; content.style.display = 'block';
 
-                const badge = document.getElementById('fuzzy-index-badge');
-                if (data.status === 'index_not_ready') {
-                    badge.textContent = 'Index loading...';
-                    badge.className = 'badge badge-warning';
-                } else {
-                    badge.textContent = 'Ready';
-                    badge.className = 'badge badge-success';
-                }
+  document.getElementById('wit-total-calls').textContent = data.total_calls || 0;
+  document.getElementById('wit-success-rate').textContent = (data.success_rate * 100).toFixed(1) + '%';
+  document.getElementById('wit-rpm').textContent = data.calls_per_minute || 0;
 
-                if (data.results && data.results.length > 0) {
-                    tbody.innerHTML = data.results.map(p => {
-                        const score = p.score || 0;
-                        let scoreColor = 'var(--text-secondary)';
-                        if (score >= 70) scoreColor = 'var(--success)';
-                        else if (score >= 50) scoreColor = 'var(--accent-solid)';
-                        else if (score >= 30) scoreColor = 'var(--warning)';
+  const last = data.last_classification;
+  const lastEl = document.getElementById('wit-last-text');
+  if (last && last.text) {
+    const name = last.intents?.[0]?.name || '?';
+    const conf = last.intents?.[0]?.confidence || 0;
+    lastEl.innerHTML = `<span class="text-dim">"${escapeHtml(last.text)}" →</span> <strong>${escapeHtml(name)}</strong> (${(conf*100).toFixed(0)}%)`;
+  } else {
+    lastEl.innerHTML = '<span class="text-dim">No classifications yet</span>';
+  }
 
-                        const imgHtml = p.image
-                            ? `<img src="${escapeHtml(p.image)}" style="width:40px;height:40px;border-radius:6px;object-fit:cover;">`
-                            : '<span class="text-muted">—</span>';
-                        const cats = (p.categories || []).join(', ') || '—';
-                        const sizes = (p.available_sizes || []).join(', ') || '—';
-                        const linkHtml = p.permalink
-                            ? `<a href="${escapeHtml(p.permalink)}" target="_blank" style="color:var(--accent-solid);text-decoration:none;">Open ↗</a>`
-                            : '—';
+  const tbody = document.getElementById('wit-intents-tbody');
+  const intents = data.intents || {};
+  const keys = Object.keys(intents);
+  if (!keys.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-muted" style="font-size:0.8rem">No classifications yet.</td></tr>';
+  } else {
+    tbody.innerHTML = keys.map(n => {
+      const i = intents[n];
+      return `<tr>
+        <td><strong style="color:var(--accent)">${escapeHtml(n)}</strong></td>
+        <td>${i.count}</td>
+        <td>${(i.avg_confidence*100).toFixed(0)}%</td>
+        <td>${(i.min_confidence*100).toFixed(0)}%</td>
+        <td>${(i.max_confidence*100).toFixed(0)}%</td>
+      </tr>`;
+    }).join('');
+  }
+}
 
-                        return `
-                            <tr>
-                                <td><strong style="color:${scoreColor};">${score.toFixed(1)}</strong></td>
-                                <td>${imgHtml}</td>
-                                <td>${escapeHtml(p.name || '?')}</td>
-                                <td>$${parseFloat(p.price || 0).toFixed(2)}</td>
-                                <td><span class="badge badge-info">${escapeHtml(cats)}</span></td>
-                                <td>${escapeHtml(sizes)}</td>
-                                <td>${linkHtml}</td>
-                            </tr>
-                        `;
-                    }).join('');
-                    countEl.textContent = `Showing ${data.results.length} of ${data.total} results for "${escapeHtml(data.query || q)}"`;
-                } else {
-                    tbody.innerHTML = '';
-                    resultsDiv.style.display = 'none';
-                    emptyDiv.style.display = 'block';
-                    emptyDiv.textContent = `No results found for "${q}". Try a different query.`;
-                }
-            } catch (err) {
-                console.error('Fuzzy search failed', err);
-                tbody.innerHTML = '<tr><td colspan="7" class="text-muted">Search failed. Check console.</td></tr>';
-            }
-        };
+// ══════════════════════════════════════════════════
+// FETCH STATS
+// ══════════════════════════════════════════════════
+async function fetchStats() {
+  if (!API_KEY) { showAuth(); return; }
+  const dot = document.getElementById('status-dot');
+  dot.style.background = 'var(--warning)';
+  document.getElementById('status-label').textContent = 'Polling…';
+  document.getElementById('val-last-updated').textContent = 'updating…';
 
-        const checkFuzzyIndex = async () => {
-            if (!API_KEY) return;
-            const badge = document.getElementById('fuzzy-index-badge');
-            try {
-                const res = await fetch(apiUrl('/api/fuzzy-search?q=test&limit=1'));
-                if (!res.ok) return;
-                const data = await res.json();
-                if (data.status === 'index_not_ready') {
-                    badge.textContent = 'Loading...';
-                    badge.className = 'badge badge-warning';
-                } else {
-                    badge.textContent = 'Ready';
-                    badge.className = 'badge badge-success';
-                }
-            } catch (e) { /* ignore */ }
-        };
+  try {
+    const [statsRes, witRes] = await Promise.all([
+      fetch(apiUrl('/api/dashboard-stats')),
+      fetch(apiUrl('/api/wit-stats'))
+    ]);
+    if (statsRes.status === 401 || witRes.status === 401) {
+      sessionStorage.removeItem('dashboard_api_key'); API_KEY = '';
+      showAuth(); showToast('warning', 'Session expired — please re-authenticate.');
+      return;
+    }
+    const statsData = await statsRes.json();
+    const witData = await witRes.json();
+    renderDashboard(statsData);
+    renderWitStats(witData);
+    document.getElementById('val-last-updated').textContent = new Date().toLocaleTimeString();
+    dot.style.background = 'var(--success)';
+    document.getElementById('status-label').textContent = 'Live';
+  } catch (err) {
+    console.error('Fetch error', err);
+    dot.style.background = 'var(--danger)';
+    document.getElementById('status-label').textContent = 'Error';
+  }
+}
 
-        const sendBroadcast = async () => {
-            if (!API_KEY) {
-                showAuthOverlay();
-                return;
-            }
-            const msg = document.getElementById('broadcast-msg').value;
-            const status = document.getElementById('broadcast-status');
-            if (!msg.trim()) {
-                status.innerText = "Please enter a message.";
-                status.style.color = "var(--warning)";
-                return;
-            }
-            status.innerText = "Sending broadcast...";
-            status.style.color = "var(--text-secondary)";
-            
-            try {
-                const res = await fetch(apiUrl('/api/broadcast'), {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${API_KEY}`
-                    },
-                    body: JSON.stringify({ message: msg })
-                });
-                if (res.status === 401) {
-                    sessionStorage.removeItem('dashboard_api_key');
-                    API_KEY = '';
-                    showAuthOverlay();
-                    return;
-                }
-                const data = await res.json();
-                if (data.status === 'ok') {
-                    status.innerText = "✅ " + data.message;
-                    status.style.color = "var(--success)";
-                    document.getElementById('broadcast-msg').value = '';
-                } else {
-                    status.innerText = "❌ " + data.message;
-                    status.style.color = "var(--warning)";
-                }
-            } catch (e) {
-                status.innerText = "❌ Error sending broadcast.";
-                status.style.color = "var(--warning)";
-            }
-        };
+// ══════════════════════════════════════════════════
+// CHAT-STYLE FUZZY SEARCH
+// ══════════════════════════════════════════════════
+function addChatMessage(type, html) {
+  const container = document.getElementById('chat-container');
+  const div = document.createElement('div');
+  div.className = `chat-msg chat-msg-${type}`;
+  div.innerHTML = html;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
 
-        // Check if we have a stored API key
-        if (API_KEY) {
-            hideAuthOverlay();
-            fetchStats();
-            checkFuzzyIndex();
-        } else {
-            showAuthOverlay();
-        }
+function showTyping() {
+  const container = document.getElementById('chat-container');
+  const div = document.createElement('div');
+  div.className = 'typing-indicator';
+  div.id = 'typing-indicator';
+  div.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
 
-        // Refresh every 5 seconds
-        setInterval(fetchStats, 5000);
-        // Check fuzzy index status every 30 seconds
-        setInterval(checkFuzzyIndex, 30000);
-    </script>
+function hideTyping() {
+  const el = document.getElementById('typing-indicator');
+  if (el) el.remove();
+}
+
+function setQuery(text) {
+  document.getElementById('fuzzy-query').value = text;
+  runFuzzySearch();
+}
+
+function clearChat() {
+  document.getElementById('chat-container').innerHTML = `
+    <div class="chat-msg chat-msg-reply">
+      👋 Ask me anything! Try the quick chips or type your own query.
+      <div class="chat-time">Just now</div>
+    </div>`;
+}
+
+async function runFuzzySearch() {
+  if (!API_KEY) { showAuth(); return; }
+  const q = document.getElementById('fuzzy-query').value.trim();
+  if (!q) {
+    showToast('warning', 'Type a product name to search.');
+    return;
+  }
+
+  // Add user message
+  addChatMessage('query', `${escapeHtml(q)}<div class="chat-time">${new Date().toLocaleTimeString()}</div>`);
+
+  // Show typing
+  showTyping();
+
+  try {
+    const res = await fetch(apiUrl(`/api/fuzzy-search?q=${encodeURIComponent(q)}&limit=6`));
+    if (res.status === 401) { sessionStorage.removeItem('dashboard_api_key'); API_KEY = ''; showAuth(); return; }
+    const data = await res.json();
+
+    hideTyping();
+
+    // Update badge
+    const badge = document.getElementById('fuzzy-index-badge');
+    badge.textContent = data.status === 'index_not_ready' ? 'Loading…' : 'Ready';
+    badge.className = data.status === 'index_not_ready' ? 'badge badge-warning' : 'badge badge-success';
+
+    if (data.results && data.results.length > 0) {
+      addChatMessage('reply', `<strong>🔍 ${data.results.length} result${data.results.length > 1 ? 's' : ''}</strong> for "${escapeHtml(q)}"<div class="chat-time">${new Date().toLocaleTimeString()}</div>`);
+      data.results.forEach(p => {
+        const score = p.score || 0;
+        let scoreCls = 'badge-neutral';
+        if (score >= 70) scoreCls = 'badge-success'; else if (score >= 50) scoreCls = 'badge-info'; else if (score >= 30) scoreCls = 'badge-warning';
+        const imgHtml = p.image ? `<img src="${escapeHtml(p.image)}" onerror="this.style.display='none'" alt="">` : '';
+        addChatMessage('product', `
+          ${imgHtml}
+          <div class="prod-info">
+            <div class="prod-name">${escapeHtml(p.name || '?')}</div>
+            <div class="prod-meta">${(p.categories||[]).join(', ') || '—'} · <span class="badge ${scoreCls}" style="font-size:0.6rem">${score.toFixed(1)}</span></div>
+            <div class="flex gap-2 items-center" style="margin-top:0.2rem">
+              <span class="prod-price">$${parseFloat(p.price||0).toFixed(2)}</span>
+              ${p.permalink ? `<a href="${escapeHtml(p.permalink)}" target="_blank" style="color:var(--accent);font-size:0.75rem;text-decoration:none">Open ↗</a>` : ''}
+              ${p.available_sizes && p.available_sizes.length ? `<span style="font-size:0.7rem;color:var(--text-muted)">· ${p.available_sizes.join(', ')}</span>` : ''}
+            </div>
+          </div>
+        `);
+      });
+    } else {
+      addChatMessage('reply', `😕 No results found for "<strong>${escapeHtml(q)}</strong>". Try a different query.<div class="chat-time">${new Date().toLocaleTimeString()}</div>`);
+    }
+  } catch (err) {
+    hideTyping();
+    addChatMessage('reply', `❌ Search failed. Check console.<div class="chat-time">${new Date().toLocaleTimeString()}</div>`);
+    showToast('error', 'Search request failed.');
+  }
+}
+
+// ══════════════════════════════════════════════════
+// FUZZY INDEX CHECK
+// ══════════════════════════════════════════════════
+async function checkFuzzyIndex() {
+  if (!API_KEY) return;
+  try {
+    const res = await fetch(apiUrl('/api/fuzzy-search?q=test&limit=1'));
+    if (!res.ok) return;
+    const data = await res.json();
+    const badge = document.getElementById('fuzzy-index-badge');
+    badge.textContent = data.status === 'index_not_ready' ? 'Loading…' : 'Ready';
+    badge.className = data.status === 'index_not_ready' ? 'badge badge-warning' : 'badge badge-success';
+  } catch(e) {}
+}
+
+// ══════════════════════════════════════════════════
+// CHANGE API KEY
+// ══════════════════════════════════════════════════
+async function changeApiKey() {
+  if (!API_KEY) { showAuth(); return; }
+  const current = document.getElementById('key-current').value.trim();
+  const newKey = document.getElementById('key-new').value.trim();
+  const confirm = document.getElementById('key-confirm').value.trim();
+  const status = document.getElementById('change-key-status');
+
+  // Clear previous status
+  status.textContent = '';
+
+  // Validation
+  if (!current) { showToast('warning', 'Enter your current API key.'); return; }
+  if (!newKey || newKey.length < 8) { showToast('warning', 'New key must be at least 8 characters.'); return; }
+  if (newKey !== confirm) { showToast('warning', 'New keys do not match.'); return; }
+  if (newKey === current) { showToast('warning', 'New key must be different from the current key.'); return; }
+
+  // Confirm with user
+  if (!confirm('Are you sure you want to change the API key? You will need to re-authenticate with the new key immediately.')) return;
+
+  status.textContent = 'Updating…';
+  status.style.color = 'var(--text-muted)';
+
+  try {
+    const res = await fetch(apiUrl('/api/admin/change-key'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${API_KEY}` },
+      body: JSON.stringify({ current_key: current, new_key: newKey })
+    });
+
+    if (res.status === 401) { sessionStorage.removeItem('dashboard_api_key'); API_KEY = ''; showAuth(); return; }
+
+    const data = await res.json();
+
+    if (res.status === 403) {
+      showToast('error', 'Current API key is incorrect.');
+      status.textContent = '';
+      return;
+    }
+
+    if (res.ok) {
+      // Clear inputs
+      document.getElementById('key-current').value = '';
+      document.getElementById('key-new').value = '';
+      document.getElementById('key-confirm').value = '';
+      status.textContent = '';
+
+      // Update the stored API key with the new one
+      API_KEY = newKey;
+      sessionStorage.setItem('dashboard_api_key', newKey);
+
+      showToast('success', '✅ API key changed! You are now using the new key.');
+    } else {
+      showToast('error', data.detail || 'Failed to update API key.');
+      status.textContent = '';
+    }
+  } catch(e) {
+    showToast('error', 'Network error updating API key.');
+    status.textContent = '';
+  }
+}
+
+// ══════════════════════════════════════════════════
+// BROADCAST
+// ══════════════════════════════════════════════════
+async function sendBroadcast() {
+  if (!API_KEY) { showAuth(); return; }
+  const msg = document.getElementById('broadcast-msg').value.trim();
+  const status = document.getElementById('broadcast-status');
+  if (!msg) { showToast('warning', 'Please enter a message.'); return; }
+  status.textContent = 'Sending…';
+  status.style.color = 'var(--text-muted)';
+
+  try {
+    const res = await fetch(apiUrl('/api/broadcast'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${API_KEY}` },
+      body: JSON.stringify({ message: msg })
+    });
+    if (res.status === 401) { sessionStorage.removeItem('dashboard_api_key'); API_KEY = ''; showAuth(); return; }
+    const data = await res.json();
+    if (data.status === 'ok') {
+      status.textContent = '';
+      document.getElementById('broadcast-msg').value = '';
+      showToast('success', data.message || 'Broadcast sent!');
+    } else {
+      showToast('error', data.message || 'Broadcast failed.');
+      status.textContent = '';
+    }
+  } catch(e) {
+    showToast('error', 'Network error sending broadcast.');
+    status.textContent = '';
+  }
+}
+
+// ══════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════
+if (API_KEY) {
+  hideAuth();
+  restoreCardStates();
+  fetchStats();
+  checkFuzzyIndex();
+} else {
+  showAuth();
+}
+
+setInterval(fetchStats, 5000);
+setInterval(checkFuzzyIndex, 30000);
+</script>
 </body>
 </html>

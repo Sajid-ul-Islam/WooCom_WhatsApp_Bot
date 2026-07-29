@@ -42,4 +42,4 @@ services:
 
       # AI keys (OPENAI_API_KEY, LLM_PROVIDER, etc.) are loaded
       # from the Supabase 'config' table at startup.
-    healthCheckPath: /webhook
+    healthCheckPath: /

@@ -295,6 +295,25 @@ class DatabaseClient:
             logger.error(f"Error fetching app config from Supabase: {e}")
             return {}
 
+    async def set_app_config(self, key: str, value: str) -> bool:
+        """
+        Upsert a single key-value pair into the 'config' table in Supabase.
+        Used for updating secrets like ADMIN_API_KEY from the dashboard.
+        Returns True on success, False on failure.
+        """
+        if not self.client:
+            return False
+        try:
+            await self.client.table("config").upsert({
+                "key": key,
+                "value": value
+            }).execute()
+            logger.info(f"App config updated: {key}")
+            return True
+        except Exception as e:
+            logger.error(f"Error setting app config key '{key}': {e}")
+            return False
+
     async def get_abandoned_carts(self, hours: int = 24) -> list:
         """Fetch carts that have been inactive for exactly 'hours' to 'hours+1' to prevent spam."""
         if not self.client: return []
