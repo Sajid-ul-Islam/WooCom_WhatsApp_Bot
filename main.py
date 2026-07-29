@@ -27,6 +27,14 @@ logger = logging.getLogger("whatsapp_bot")
 
 load_dotenv()
 
+# DEV_MODE: when enabled, all admin/dashboard auth is bypassed (local dev only)
+DEV_MODE = os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes")
+IS_PRODUCTION = os.getenv("RENDER") is not None  # Render sets this env var automatically
+
+if DEV_MODE and IS_PRODUCTION:
+    logger.critical("🛑 DEV_MODE is enabled on Render (production)! Forcing DEV_MODE off for security.")
+    DEV_MODE = False
+
 # Database client (created early, before lifespan)
 db = DatabaseClient()
 
@@ -65,6 +73,9 @@ def verify_meta_webhook_signature(raw_body: bytes, signature_header: str) -> boo
 
 def verify_admin_auth(request: Request) -> bool:
     """Check if the request has a valid admin API key."""
+    if DEV_MODE:
+        return True
+
     admin_key = os.getenv("ADMIN_API_KEY", "")
     if not admin_key:
         logger.warning("ADMIN_API_KEY not set — admin endpoints are unprotected.")
@@ -172,6 +183,9 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"WooCommerce URL: {os.getenv('WOOCOMMERCE_URL', 'not set')}")
     logger.info(f"LLM Provider: {os.getenv('LLM_PROVIDER', 'not set')}")
+
+    if DEV_MODE:
+        logger.warning("⚠️  DEV_MODE is enabled — dashboard and admin endpoints are UNPROTECTED. Do not use in production!")
 
     if not db.client:
         logger.error("Supabase client not initialized. Database and carts will not function.")

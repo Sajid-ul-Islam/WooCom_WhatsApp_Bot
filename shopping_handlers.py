@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_main_menu(ctx: BotContext, to: str):
-    """Sends a dynamic, modern main menu based on user state."""
+    """Sends a clean, hierarchical main menu with clear sections."""
     # Fetch dynamic user state (cart items)
     cart = await ctx.db.get_cart(to)
     cart_items = sum(item.get("quantity", 1) for item in cart)
@@ -17,54 +17,41 @@ async def handle_main_menu(ctx: BotContext, to: str):
 
     text = get_text(lang, "welcome")
 
-    # 1. Shopping Section
+    # 1. Shopping (Primary actions)
     shopping_rows = [
         {"id": "menu_categories", "title": get_text(lang, "menu_categories"), "description": get_text(lang, "desc_explore")},
-        {"id": "menu_recommend", "title": get_text(lang, "menu_recommend"), "description": get_text(lang, "desc_for_you")}
+        {"id": "menu_recommend", "title": get_text(lang, "menu_recommend"), "description": get_text(lang, "desc_for_you")},
+        {"id": "menu_size", "title": get_text(lang, "menu_size"), "description": get_text(lang, "desc_find_size")}
     ]
-    
-    if cart_items > 0:
-        shopping_rows.append({
-            "id": "menu_cart", 
-            "title": f"🛒 ({cart_items}) {get_text(lang, 'menu_cart')}", 
-            "description": get_text(lang, "desc_cart_items")
-        })
-    else:
-        shopping_rows.append({
-            "id": "menu_cart", 
-            "title": get_text(lang, "menu_cart"), 
-            "description": get_text(lang, "desc_empty_cart")
-        })
-        
-    shopping_rows.append({
-        "id": "menu_size", 
-        "title": get_text(lang, "menu_size"), 
-        "description": get_text(lang, "desc_find_size")
-    })
 
-    # 2. Account Section
-    account_rows = [
+    # 2. Cart & Orders (Transactional)
+    transactional_rows = [
+        {"id": "menu_cart", "title": get_text(lang, "menu_cart"), "description": get_text(lang, "desc_cart_items") if cart_items > 0 else get_text(lang, "desc_empty_cart")},
         {"id": "menu_orders", "title": get_text(lang, "menu_orders"), "description": get_text(lang, "desc_view_orders")}
     ]
-    
-    # 3. Support & Settings Section
-    support_rows = [
-        {"id": "menu_cancel_order", "title": get_text(lang, "menu_cancel_order"), "description": get_text(lang, "desc_cancel_order")},
-        {"id": "menu_human", "title": get_text(lang, "menu_human"), "description": get_text(lang, "desc_talk_human")},
-        {"id": "menu_language", "title": get_text(lang, "menu_language"), "description": get_text(lang, "desc_change_lang")}
-    ]
-    
+
+    # Update cart title with count
     if cart_items > 0:
-        support_rows.append({
-            "id": "cart_clear", 
-            "title": get_text(lang, "cart_clear"), 
+        transactional_rows[0]["title"] = f"({cart_items}) {get_text(lang, 'menu_cart')}"
+
+    # 3. Help & Settings (Secondary)
+    settings_rows = [
+        {"id": "menu_human", "title": get_text(lang, "menu_human"), "description": get_text(lang, "desc_talk_human")},
+        {"id": "menu_language", "title": get_text(lang, "menu_language"), "description": get_text(lang, "desc_change_lang")},
+        {"id": "menu_cancel_order", "title": get_text(lang, "menu_cancel_order"), "description": get_text(lang, "desc_cancel_order")}
+    ]
+
+    if cart_items > 0:
+        settings_rows.append({
+            "id": "cart_clear",
+            "title": get_text(lang, "cart_clear"),
             "description": get_text(lang, "desc_clear_cart")
         })
 
     sections = [
         {"title": get_text(lang, "section_store"), "rows": shopping_rows},
-        {"title": get_text(lang, "section_account"), "rows": account_rows},
-        {"title": get_text(lang, "section_support"), "rows": support_rows}
+        {"title": get_text(lang, "section_account"), "rows": transactional_rows},
+        {"title": get_text(lang, "section_support"), "rows": settings_rows}
     ]
 
     await ctx.wa.send_list_message(
