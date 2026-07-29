@@ -428,6 +428,36 @@ async def toggle_bot_pause(req: TogglePauseRequest):
     return JSONResponse({"status": "ok", "phone_number": req.phone_number, "paused": req.paused})
 
 
+class ChannelPostRequest(BaseModel):
+    target: str = ""
+    message: str
+    image_url: str | None = None
+
+
+@app.get("/api/channel-bridge-status")
+async def api_channel_bridge_status():
+    """Returns the connection status of the local whatsapp-web.js Channel Bridge."""
+    if not ctx or not ctx.wa:
+        return JSONResponse({"status": "offline", "ready": False, "authenticated": False})
+    status = await ctx.wa.get_channel_bridge_status()
+    return JSONResponse(content=status)
+
+
+@app.post("/api/channel-post")
+async def api_channel_post(req: ChannelPostRequest):
+    """Sends a post directly to a WhatsApp Channel via local whatsapp-web.js bridge."""
+    if not req.message.strip():
+        return JSONResponse({"status": "error", "detail": "Message text is required"}, status_code=400)
+
+    target = req.target.strip() or os.getenv("WHATSAPP_CHANNEL_JID", "https://whatsapp.com/channel/0029Vb8OUEX2v1IuuJP6Z11K")
+    res = await ctx.wa.send_channel_post(target, req.message.strip(), req.image_url)
+
+    if res.get("status") == "ok":
+        return JSONResponse({"status": "ok", "message": "Post published to WhatsApp Channel successfully!", "data": res})
+    else:
+        return JSONResponse({"status": "error", "detail": res.get("error") or res.get("detail") or "Failed to post to Channel Bridge"}, status_code=500)
+
+
 # --- Webhook Endpoint Handlers ---
 
 
@@ -700,6 +730,17 @@ async def woo_product_webhook(request: Request):
                 logger.debug(f"Fuzzy index updated for product {prod_id}.")
         except Exception as e:
             logger.warning(f"Failed to update fuzzy index for product {prod_id}: {e}")
+
+        # --- Auto-Post New Product Announcement to WhatsApp Channel ---
+        try:
+            channel_target = os.getenv("WHATSAPP_CHANNEL_JID", "")
+            if channel_target and ctx and ctx.wa:
+                img_url = images[0].get("src") if images else None
+                msg_text = f"🆕 *NEW PRODUCT ALERT!*\n\n🛍️ *{name}*\n💰 Price: ${price}\n\n{description[:150]}...\n\n🔗 Order Now: {permalink}"
+                asyncio.create_task(ctx.wa.send_channel_post(channel_target, msg_text, img_url))
+                logger.info(f"Scheduled auto channel post for new product {prod_id}.")
+        except Exception as e:
+            logger.warning(f"Could not schedule channel post for product {prod_id}: {e}")
 
         return JSONResponse({"status": "ok"})
     except json.JSONDecodeError:

@@ -518,6 +518,29 @@ header{flex-direction:column;align-items:stretch}
       ⚠️ After changing the key, you will need to re-authenticate with the new key. Save it somewhere safe before clicking Update.
     </div>
   </div>
+<!-- Channel Post -->
+<div class="card card-collapsible is-open mb-4" id="card-channel">
+  <div class="card-header" onclick="toggleCard('card-channel')">
+    <div class="card-header-left">
+      <span class="toggle-chevron"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>
+      <span class="card-header-title">📢 Post to WhatsApp Channel</span>
+      <span class="badge badge-neutral" id="channel-bridge-badge" style="font-size:0.65rem">Checking status…</span>
+    </div>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-4" style="font-size:0.85rem">Broadcast announcements, new product launches, or promotions directly to your WhatsApp Channel followers.</p>
+
+    <div class="flex gap-3 flex-wrap" style="flex-direction:column">
+      <input type="text" id="channel-target-input" class="input" style="max-width:550px" placeholder="Channel Link or JID (e.g. https://whatsapp.com/channel/0029Vb8OUEX2v1IuuJP6Z11K)" value="https://whatsapp.com/channel/0029Vb8OUEX2v1IuuJP6Z11K">
+      <input type="text" id="channel-image-url" class="input" style="max-width:550px" placeholder="Optional Image URL (https://example.com/product.jpg)">
+      <textarea id="channel-msg-input" class="input" style="max-width:550px;min-height:90px;font-family:inherit" placeholder="Write your channel announcement or offer..."></textarea>
+      
+      <div class="flex gap-3 items-center flex-wrap">
+        <button id="channel-post-btn" class="btn btn-primary" onclick="sendChannelPost()">📢 Publish Post</button>
+        <span id="channel-post-status" style="font-size:0.85rem;color:var(--text-muted)"></span>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- ═══ TABLES ═══ -->
@@ -1221,6 +1244,74 @@ async function sendLiveReply() {
 }
 
 // ══════════════════════════════════════════════════
+// CHANNEL BRIDGE & POSTING
+// ══════════════════════════════════════════════════
+async function checkChannelBridgeStatus() {
+  const badge = document.getElementById('channel-bridge-badge');
+  if (!badge) return;
+  try {
+    const res = await fetch(apiUrl('/api/channel-bridge-status'));
+    if (!res.ok) {
+      badge.textContent = 'Offline 🔴';
+      badge.className = 'badge badge-warning';
+      return;
+    }
+    const data = await res.json();
+    if (data.ready) {
+      badge.textContent = 'Bridge Ready 🟢';
+      badge.className = 'badge badge-success';
+    } else if (data.authenticated) {
+      badge.textContent = 'Authenticated 🟡';
+      badge.className = 'badge badge-info';
+    } else {
+      badge.textContent = 'Scan QR Code ⚠️';
+      badge.className = 'badge badge-warning';
+    }
+  } catch(e) {
+    badge.textContent = 'Offline 🔴';
+    badge.className = 'badge badge-warning';
+  }
+}
+
+async function sendChannelPost() {
+  if (!API_KEY) { showAuth(); return; }
+  const target = document.getElementById('channel-target-input').value.trim();
+  const imageUrl = document.getElementById('channel-image-url').value.trim();
+  const msg = document.getElementById('channel-msg-input').value.trim();
+  const status = document.getElementById('channel-post-status');
+  const btn = document.getElementById('channel-post-btn');
+
+  if (!msg && !imageUrl) { showToast('warning', 'Please enter a message or image URL.'); return; }
+
+  status.textContent = 'Publishing to Channel…';
+  status.style.color = 'var(--text-muted)';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(apiUrl('/api/channel-post'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${API_KEY}` },
+      body: JSON.stringify({ target: target, message: msg, image_url: imageUrl || null })
+    });
+    if (res.status === 401) { sessionStorage.removeItem('dashboard_api_key'); API_KEY = ''; showAuth(); return; }
+    const data = await res.json();
+    if (data.status === 'ok') {
+      status.textContent = '';
+      document.getElementById('channel-msg-input').value = '';
+      showToast('success', '✅ Published to WhatsApp Channel successfully!');
+    } else {
+      showToast('error', data.detail || 'Channel post failed.');
+      status.textContent = '';
+    }
+  } catch(e) {
+    showToast('error', 'Network error publishing to Channel.');
+    status.textContent = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ══════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════
 if (API_KEY) {
@@ -1228,12 +1319,15 @@ if (API_KEY) {
   restoreCardStates();
   fetchStats();
   checkFuzzyIndex();
+  checkChannelBridgeStatus();
 } else {
   showAuth();
 }
 
 setInterval(fetchStats, 5000);
 setInterval(checkFuzzyIndex, 30000);
+setInterval(checkChannelBridgeStatus, 10000);
+
 </script>
 </body>
 </html>

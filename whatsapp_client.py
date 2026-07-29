@@ -25,6 +25,32 @@ class WhatsAppClient:
         """Close the underlying HTTP client."""
         await self._client.aclose()
 
+    async def send_channel_post(self, target: str, message: str, image_url: Optional[str] = None) -> Dict[str, Any]:
+        """Send post to WhatsApp Channel via local whatsapp-web.js bridge on port 3001."""
+        bridge_url = os.getenv("CHANNEL_BRIDGE_URL", "http://localhost:3001/post-channel")
+        try:
+            payload = {
+                "target": target,
+                "message": message
+            }
+            if image_url:
+                payload["imageUrl"] = image_url
+
+            res = await self._client.post(bridge_url, json=payload, timeout=15.0)
+            return res.json()
+        except Exception as e:
+            logger.error(f"Failed to post to WhatsApp Channel Bridge: {e}")
+            return {"status": "error", "detail": str(e)}
+
+    async def get_channel_bridge_status(self) -> Dict[str, Any]:
+        """Check status of local whatsapp-web.js bridge."""
+        health_url = os.getenv("CHANNEL_BRIDGE_HEALTH_URL", "http://localhost:3001/health")
+        try:
+            res = await self._client.get(health_url, timeout=3.0)
+            return res.json()
+        except Exception:
+            return {"status": "offline", "ready": False, "authenticated": False}
+
     async def _post_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Helper to send POST request to WhatsApp Cloud API."""
         if not self.phone_id or not self.token:

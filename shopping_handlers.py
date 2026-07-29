@@ -142,6 +142,11 @@ async def handle_categories(ctx: BotContext, to: str):
     )
 
 
+def _truncate_title(text: str, max_len: int = 24) -> str:
+    """Truncate text for WhatsApp List Message titles, adding ellipsis when needed."""
+    return text[:max_len - 3] + "..." if len(text) > max_len else text
+
+
 async def handle_category_products(ctx: BotContext, to: str, category_id: int):
     """Sends products in a specific category as a List Message."""
     lang = await ctx.db.get_user_language(to)
@@ -153,11 +158,9 @@ async def handle_category_products(ctx: BotContext, to: str, category_id: int):
     rows = []
     for p in products:
         price_text = f"BDT {p.get('price')}" if p.get("price") else get_text(lang, "price_on_request")
-        name = p["name"]
-        truncated_name = name[:22] + "..." if len(name) > 24 else name
         rows.append({
             "id": f"prod_{p['id']}",
-            "title": truncated_name,
+            "title": _truncate_title(p["name"]),
             "description": f"{price_text} - {get_text(lang, 'desc_view_detail')}"
         })
 
@@ -374,11 +377,9 @@ async def handle_ai_search(ctx: BotContext, to: str, query: str):
                 rows = []
                 for p in fuzzy_matches:
                     price_text = f"BDT {p.get('price')}" if p.get("price") else get_text(lang, "price_on_request")
-                    name = p.get("name", "")
-                    truncated_name = name[:22] + "..." if len(name) > 24 else name
                     rows.append({
                         "id": f"prod_{p['id']}",
-                        "title": truncated_name,
+                        "title": _truncate_title(p.get("name", "")),
                         "description": f"{price_text} - {get_text(lang, 'desc_view_detail')}"[:72]
                     })
                 sections = [{"title": get_text(lang, "section_available_products"), "rows": rows}]
@@ -421,11 +422,9 @@ async def handle_ai_search(ctx: BotContext, to: str, query: str):
         rows = []
         for p in matching_products:
             price_text = f"BDT {p.get('price')}" if p.get("price") else get_text(lang, "price_on_request")
-            name = p["name"]
-            truncated_name = name[:22] + "..." if len(name) > 24 else name
             rows.append({
                 "id": f"prod_{p['id']}",
-                "title": truncated_name,
+                "title": _truncate_title(p["name"]),
                 "description": f"{price_text} - {get_text(lang, 'desc_view_detail')}"
             })
         sections = [{"title": get_text(lang, "recommended_items_title"), "rows": rows}]
@@ -519,11 +518,9 @@ async def handle_recommend_for_you(ctx: BotContext, to: str):
         rows = []
         for p in products[:4]:
             price_text = f"BDT {p.get('price')}" if p.get("price") else get_text(lang, "price_on_request")
-            name = p["name"]
-            truncated_name = name[:22] + "..." if len(name) > 24 else name
             rows.append({
                 "id": f"prod_{p['id']}",
-                "title": truncated_name,
+                "title": _truncate_title(p["name"]),
                 "description": f"{price_text} - {get_text(lang, 'desc_view_detail')}"[:72]
             })
         sections = [{"title": get_text(lang, "recommended_items_title"), "rows": rows}]

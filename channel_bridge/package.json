@@ -1,0 +1,16 @@
+{
+  "name": "whatsapp-channel-bridge",
+  "version": "1.0.0",
+  "description": "WhatsApp Web Channel Bridge service for posting to WhatsApp Channels",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.0"
+  }
+}
