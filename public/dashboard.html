@@ -533,8 +533,8 @@ header{flex-direction:column;align-items:stretch}
     </div>
     <div class="card-body">
       <div class="table-container">
-        <table><thead><tr><th>Phone</th><th>Name</th><th>State</th><th>Bot</th><th>Active</th></tr></thead>
-          <tbody id="users-tbody"><tr><td colspan="5" class="text-muted" style="font-size:0.8rem;text-align:center">Loading…</td></tr></tbody>
+        <table><thead><tr><th>Phone</th><th>Name</th><th>State</th><th>Bot</th><th>Active</th><th>Action</th></tr></thead>
+          <tbody id="users-tbody"><tr><td colspan="6" class="text-muted" style="font-size:0.8rem;text-align:center">Loading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -556,6 +556,44 @@ header{flex-direction:column;align-items:stretch}
         </table>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Live Customer Chat Modal -->
+<div id="live-chat-modal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);z-index:9999;align-items:center;justify-content:center;padding:1rem;">
+  <div style="background:#0f172a;border:1px solid var(--border);border-radius:16px;width:100%;max-width:680px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,0.5);">
+    
+    <!-- Modal Header -->
+    <div style="padding:1.25rem 1.5rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);">
+      <div>
+        <div style="font-size:1.1rem;font-weight:700;display:flex;align-items:center;gap:0.5rem;" id="chat-modal-title">
+          <span>💬 Customer Chat</span>
+        </div>
+        <div style="font-size:0.8rem;color:var(--text-dim);margin-top:0.25rem;" id="chat-modal-subtitle">
+          Phone: +...
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.75rem;">
+        <button id="toggle-pause-btn" class="btn btn-sm btn-ghost" onclick="toggleBotPauseCurrent()" style="border:1px solid var(--border);font-size:0.78rem;">
+          🤖 Bot Active
+        </button>
+        <button class="btn btn-sm btn-ghost" onclick="closeLiveChat()" style="font-size:1.2rem;line-height:1;padding:0.2rem 0.6rem;cursor:pointer;">&times;</button>
+      </div>
+    </div>
+
+    <!-- Chat Messages Thread -->
+    <div id="live-chat-messages" style="flex:1;padding:1.25rem;overflow-y:auto;display:flex;flex-direction:column;gap:0.75rem;background:rgba(0,0,0,0.25);min-height:320px;max-height:460px;">
+      <div style="text-align:center;color:var(--text-muted);font-size:0.85rem;padding:2rem;">Loading chat history...</div>
+    </div>
+
+    <!-- Reply Input Box -->
+    <div style="padding:1rem 1.25rem;border-top:1px solid var(--border);background:rgba(255,255,255,0.02);display:flex;gap:0.75rem;align-items:center;">
+      <input type="text" id="live-reply-input" class="input" placeholder="Type a message to reply on WhatsApp..." onkeydown="if(event.key==='Enter') sendLiveReply()" style="flex:1;">
+      <button id="live-reply-send-btn" class="btn btn-primary" onclick="sendLiveReply()">
+        Send 🚀
+      </button>
+    </div>
+    
   </div>
 </div>
 
@@ -703,16 +741,18 @@ function renderDashboard(data) {
     usersTbody.innerHTML = data.users.map(u => {
       const botBadge = u.bot_paused ? '<span class="badge badge-warning">⏸ Paused</span>' : '<span class="badge badge-success">● Active</span>';
       const stateBadge = `<span class="badge badge-neutral">${escapeHtml(u.state || 'idle')}</span>`;
+      const chatBtn = `<button class="btn btn-sm btn-primary" onclick="openLiveChat('${escapeHtml(u.phone_number)}', '${escapeHtml(u.first_name || 'Customer')}')">💬 Chat</button>`;
       return `<tr>
         <td title="${escapeHtml(u.phone_number)}">${maskPhone(u.phone_number)}</td>
         <td>${escapeHtml(u.first_name || 'Customer')}</td>
         <td>${stateBadge}</td>
         <td>${botBadge}</td>
         <td style="font-size:0.78rem;color:var(--text-muted)">${timeAgo(u.last_active)}</td>
+        <td>${chatBtn}</td>
       </tr>`;
     }).join('');
   } else {
-    usersTbody.innerHTML = '<tr><td colspan="5" class="text-muted" style="font-size:0.8rem;text-align:center">No users found.</td></tr>';
+    usersTbody.innerHTML = '<tr><td colspan="6" class="text-muted" style="font-size:0.8rem;text-align:center">No users found.</td></tr>';
   }
 
   // Orders table
@@ -1034,6 +1074,149 @@ async function sendBroadcast() {
   } catch(e) {
     showToast('error', 'Network error sending broadcast.');
     status.textContent = '';
+  }
+}
+
+// ══════════════════════════════════════════════════
+// LIVE CUSTOMER CHAT & DIRECT REPLY
+// ══════════════════════════════════════════════════
+let currentChatPhone = null;
+let liveChatInterval = null;
+
+async function openLiveChat(phone, name) {
+  currentChatPhone = phone;
+  const modal = document.getElementById('live-chat-modal');
+  document.getElementById('chat-modal-title').innerHTML = `💬 ${escapeHtml(name || 'Customer')} <span style="font-size:0.8rem;font-weight:400;color:var(--text-muted)">(${phone})</span>`;
+  document.getElementById('chat-modal-subtitle').textContent = `WhatsApp: ${phone}`;
+  modal.style.display = 'flex';
+  
+  await fetchLiveChatData();
+  
+  // Refresh live chat thread every 3 seconds while open
+  if (liveChatInterval) clearInterval(liveChatInterval);
+  liveChatInterval = setInterval(fetchLiveChatData, 3000);
+}
+
+function closeLiveChat() {
+  document.getElementById('live-chat-modal').style.display = 'none';
+  currentChatPhone = null;
+  if (liveChatInterval) {
+    clearInterval(liveChatInterval);
+    liveChatInterval = null;
+  }
+}
+
+async function fetchLiveChatData() {
+  if (!currentChatPhone) return;
+  try {
+    const res = await fetch(apiUrl(`/api/user-chat?phone=${encodeURIComponent(currentChatPhone)}`));
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.status === 'ok') {
+      renderLiveChatThread(data.chat_history || []);
+      updatePauseButton(data.user ? data.user.bot_paused : false);
+    }
+  } catch(e) {
+    console.error("Failed to fetch user chat:", e);
+  }
+}
+
+function updatePauseButton(isPaused) {
+  const btn = document.getElementById('toggle-pause-btn');
+  if (!btn) return;
+  if (isPaused) {
+    btn.innerHTML = '👤 Human Takeover (Bot Paused)';
+    btn.style.borderColor = 'var(--warning)';
+    btn.style.color = 'var(--warning)';
+  } else {
+    btn.innerHTML = '🤖 Bot Active (Click to Pause)';
+    btn.style.borderColor = 'var(--success)';
+    btn.style.color = 'var(--success)';
+  }
+}
+
+async function toggleBotPauseCurrent() {
+  if (!currentChatPhone) return;
+  const btn = document.getElementById('toggle-pause-btn');
+  const isCurrentlyPaused = btn.style.color === 'var(--warning)';
+  const newPausedState = !isCurrentlyPaused;
+  
+  try {
+    const res = await fetch(apiUrl('/api/toggle-bot-pause'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${API_KEY}` },
+      body: JSON.stringify({ phone_number: currentChatPhone, paused: newPausedState })
+    });
+    if (res.ok) {
+      updatePauseButton(newPausedState);
+      showToast('success', newPausedState ? 'Bot paused for human takeover.' : 'Bot resumed for AI replies.');
+      fetchStats();
+    }
+  } catch(e) {
+    showToast('error', 'Failed to toggle bot pause state.');
+  }
+}
+
+function renderLiveChatThread(history) {
+  const container = document.getElementById('live-chat-messages');
+  if (!history || history.length === 0) {
+    container.innerHTML = `<div style="text-align:center;color:var(--text-muted);font-size:0.85rem;padding:2rem;">No message history recorded yet for this customer.</div>`;
+    return;
+  }
+  
+  container.innerHTML = history.map(msg => {
+    const isUser = msg.role === 'user' || msg.sender === 'Customer';
+    const align = isUser ? 'flex-start' : 'flex-end';
+    const bg = isUser ? 'rgba(255,255,255,0.06)' : 'var(--accent)';
+    const textCol = isUser ? 'var(--text)' : '#fff';
+    const border = isUser ? '1px solid var(--border)' : 'none';
+    const senderName = isUser ? 'Customer' : (msg.sender || 'Bot / Admin');
+    const timeStr = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
+    
+    return `<div style="align-self:${align};max-width:82%;display:flex;flex-direction:column;gap:0.25rem;">
+      <div style="font-size:0.68rem;color:var(--text-dim);margin-left:0.2rem;margin-right:0.2rem;align-self:${align}">
+        ${escapeHtml(senderName)} ${timeStr ? '· ' + timeStr : ''}
+      </div>
+      <div style="background:${bg};color:${textCol};border:${border};padding:0.65rem 0.9rem;border-radius:12px;font-size:0.85rem;line-height:1.45;word-break:break-word;">
+        ${escapeHtml(msg.text || msg.content || '')}
+      </div>
+    </div>`;
+  }).join('');
+  
+  // Auto-scroll to bottom of conversation thread
+  container.scrollTop = container.scrollHeight;
+}
+
+async function sendLiveReply() {
+  if (!currentChatPhone) return;
+  const input = document.getElementById('live-reply-input');
+  const btn = document.getElementById('live-reply-send-btn');
+  const text = input.value.trim();
+  if (!text) return;
+  
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  
+  try {
+    const res = await fetch(apiUrl('/api/send-user-message'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${API_KEY}` },
+      body: JSON.stringify({ phone_number: currentChatPhone, message: text })
+    });
+    const data = await res.json();
+    if (res.ok && data.status === 'ok') {
+      input.value = '';
+      showToast('success', 'Message sent to customer WhatsApp!');
+      await fetchLiveChatData();
+      fetchStats();
+    } else {
+      showToast('error', data.detail || 'Failed to send message.');
+    }
+  } catch(e) {
+    showToast('error', 'Network error sending WhatsApp reply.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send 🚀';
   }
 }
 

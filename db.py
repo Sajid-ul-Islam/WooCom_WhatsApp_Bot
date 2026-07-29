@@ -251,6 +251,19 @@ class DatabaseClient:
             logger.error(f"Error checking bot_paused for {phone}: {e}")
         return False
 
+    async def get_user_info(self, phone_number: str) -> dict:
+        """Fetch full metadata for a user (first_name, phone_number, state, bot_paused, last_active, language)."""
+        if not self.client:
+            return {}
+        phone = normalize_phone(phone_number)
+        try:
+            response = await self.client.table("whatsapp_users").select("phone_number, first_name, state, bot_paused, last_active, language").eq("phone_number", phone).execute()
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+        except Exception as e:
+            logger.error(f"Error getting user info for {phone}: {e}")
+        return {}
+
     # ==================== USER STATE MACHINE ====================
 
     async def get_user_state(self, phone_number: str) -> str:

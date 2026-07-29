@@ -5,6 +5,7 @@ import hmac
 import hashlib
 import base64
 import logging
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -26,14 +27,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("whatsapp_bot")
 
 load_dotenv()
-
-# DEV_MODE: when enabled, all admin/dashboard auth is bypassed (local dev only)
-DEV_MODE = os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes")
-IS_PRODUCTION = os.getenv("RENDER") is not None  # Render sets this env var automatically
-
-if DEV_MODE and IS_PRODUCTION:
-    logger.critical("🛑 DEV_MODE is enabled on Render (production)! Forcing DEV_MODE off for security.")
-    DEV_MODE = False
 
 # Database client (created early, before lifespan)
 db = DatabaseClient()
@@ -69,26 +62,6 @@ def verify_meta_webhook_signature(raw_body: bytes, signature_header: str) -> boo
     ).hexdigest()
 
     return hmac.compare_digest(expected, signature_header)
-
-
-def verify_admin_auth(request: Request) -> bool:
-    """Check if the request has a valid admin API key."""
-    if DEV_MODE:
-        return True
-
-    admin_key = os.getenv("ADMIN_API_KEY", "")
-    if not admin_key:
-        logger.warning("ADMIN_API_KEY not set — admin endpoints are unprotected.")
-        return True  # No key configured = open access (backward compatible)
-
-    # Check Authorization header first
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        return hmac.compare_digest(auth_header[7:], admin_key)
-
-    # Fall back to query parameter
-    query_key = request.query_params.get("api_key", "")
-    return hmac.compare_digest(query_key, admin_key)
 
 
 def verify_woo_webhook(request: Request, raw_body: bytes) -> bool:
@@ -183,9 +156,6 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"WooCommerce URL: {os.getenv('WOOCOMMERCE_URL', 'not set')}")
     logger.info(f"LLM Provider: {os.getenv('LLM_PROVIDER', 'not set')}")
-
-    if DEV_MODE:
-        logger.warning("⚠️  DEV_MODE is enabled — dashboard and admin endpoints are UNPROTECTED. Do not use in production!")
 
     if not db.client:
         logger.error("Supabase client not initialized. Database and carts will not function.")
@@ -306,19 +276,15 @@ async def health_check():
 
 
 @app.get("/api/dashboard-stats")
-async def api_dashboard_stats(request: Request):
+async def api_dashboard_stats():
     """Returns real-time dashboard statistics from Supabase."""
-    if not verify_admin_auth(request):
-        raise HTTPException(status_code=401, detail="Unauthorized. Provide a valid API key via ?api_key= or Authorization: Bearer header.")
     stats = await db.get_dashboard_stats()
     return JSONResponse(content=stats)
 
 
 @app.get("/api/fuzzy-search")
-async def api_fuzzy_search(request: Request, q: str = "", max_price: float = None, min_price: float = None, limit: int = 10):
+async def api_fuzzy_search(q: str = "", max_price: float = None, min_price: float = None, limit: int = 10):
     """Fuzzy product search endpoint for the dashboard."""
-    if not verify_admin_auth(request):
-        raise HTTPException(status_code=401, detail="Unauthorized.")
     if not ctx or not ctx.fuzzy or not ctx.fuzzy.ready:
         return JSONResponse({"results": [], "total": 0, "status": "index_not_ready"})
     results = ctx.fuzzy.search(
@@ -345,10 +311,8 @@ async def api_fuzzy_search(request: Request, q: str = "", max_price: float = Non
 
 
 @app.get("/api/wit-stats")
-async def api_wit_stats(request: Request):
+async def api_wit_stats():
     """Returns Wit.ai classification statistics."""
-    if not verify_admin_auth(request):
-        raise HTTPException(status_code=401, detail="Unauthorized. Provide a valid API key via ?api_key= or Authorization: Bearer header.")
     if not ctx or not ctx.wit:
         return JSONResponse(content={"configured": False, "total_calls": 0, "intents": {}})
     return JSONResponse(content={
@@ -372,45 +336,9 @@ class BroadcastRequest(BaseModel):
     message: str
 
 
-class ChangeKeyRequest(BaseModel):
-    current_key: str
-    new_key: str
-
-
-@app.post("/api/admin/change-key")
-async def api_change_admin_key(request: Request, req: ChangeKeyRequest):
-    """Change the admin API key. Validates current key, then updates Supabase config and in-memory env var."""
-    if not verify_admin_auth(request):
-        raise HTTPException(status_code=401, detail="Unauthorized. Provide a valid API key via ?api_key= or Authorization: Bearer header.")
-
-    current_key = os.getenv("ADMIN_API_KEY", "")
-
-    # Verify current key matches (extra safety — the request is already auth'd by verify_admin_auth)
-    if current_key and not hmac.compare_digest(req.current_key, current_key):
-        raise HTTPException(status_code=403, detail="Current API key is incorrect.")
-
-    if not req.new_key or len(req.new_key) < 8:
-        raise HTTPException(status_code=400, detail="New API key must be at least 8 characters long.")
-
-    # Update in Supabase config table
-    success = await db.set_app_config("ADMIN_API_KEY", req.new_key)
-
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to save new API key to database.")
-
-    # Update in-memory env var immediately (no restart needed)
-    os.environ["ADMIN_API_KEY"] = req.new_key
-
-    logger.info("Admin API key changed successfully via dashboard.")
-    return JSONResponse({"status": "ok", "message": "API key updated successfully. Your new key is active immediately."})
-
-
 @app.post("/api/broadcast")
-async def broadcast_message(request: Request, req: BroadcastRequest):
+async def broadcast_message(req: BroadcastRequest):
     """Sends a promotional message to all active users."""
-    if not verify_admin_auth(request):
-        raise HTTPException(status_code=401, detail="Unauthorized. Provide a valid API key via ?api_key= or Authorization: Bearer header.")
-
     users = await db.get_all_active_users()
     if not users:
         return JSONResponse({"status": "error", "message": "No users found."})
@@ -429,6 +357,75 @@ async def broadcast_message(request: Request, req: BroadcastRequest):
             await asyncio.sleep(2)  # Back off on errors
 
     return JSONResponse({"status": "ok", "message": f"Broadcast sent to {count} users."})
+
+
+# --- Live Customer Chat & Dashboard Support Endpoints ---
+
+
+class SendUserMessageRequest(BaseModel):
+    phone_number: str
+    message: str
+
+
+class TogglePauseRequest(BaseModel):
+    phone_number: str
+    paused: bool
+
+
+@app.get("/api/user-chat")
+async def get_user_chat(phone: str):
+    """Fetch user profile metadata and full chat history for dashboard live chat."""
+    if not phone:
+        return JSONResponse({"status": "error", "detail": "Missing phone parameter"}, status_code=400)
+
+    user_info = await db.get_user_info(phone)
+    history = await db.get_user_history(phone)
+    return JSONResponse({
+        "status": "ok",
+        "user": user_info,
+        "chat_history": history
+    })
+
+
+@app.post("/api/send-user-message")
+async def send_user_message(req: SendUserMessageRequest):
+    """Send a direct WhatsApp message to a customer from the admin dashboard."""
+    if not req.phone_number or not req.message.strip():
+        return JSONResponse({"status": "error", "detail": "Phone number and message required"}, status_code=400)
+
+    if not ctx or not ctx.wa:
+        return JSONResponse({"status": "error", "detail": "WhatsApp client not initialized"}, status_code=500)
+
+    # 1. Send WhatsApp message via Meta Cloud API
+    res = await ctx.wa.send_text_message(req.phone_number, req.message.strip())
+
+    # 2. Append sent message to chat_history in Supabase
+    try:
+        history = await db.get_user_history(req.phone_number)
+        history.append({
+            "role": "assistant",
+            "sender": "Human Admin",
+            "content": req.message.strip(),
+            "text": req.message.strip(),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        if len(history) > 50:
+            history = history[-50:]
+        await db.update_user_history(req.phone_number, history)
+    except Exception as e:
+        logger.warning(f"Could not update chat history for sent message: {e}")
+
+    # 3. Automatically pause bot so human takeover continues without bot interference
+    await db.set_bot_paused(req.phone_number, True)
+
+    return JSONResponse({"status": "ok", "response": res, "message": "Message sent successfully"})
+
+
+@app.post("/api/toggle-bot-pause")
+async def toggle_bot_pause(req: TogglePauseRequest):
+    """Toggle bot_paused state for human handoff from dashboard."""
+    await db.set_bot_paused(req.phone_number, req.paused)
+    return JSONResponse({"status": "ok", "phone_number": req.phone_number, "paused": req.paused})
 
 
 # --- Webhook Endpoint Handlers ---

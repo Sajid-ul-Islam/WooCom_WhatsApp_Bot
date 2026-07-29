@@ -136,24 +136,6 @@ OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4o-mini
 ```
 
-### 5. Development Mode (`DEV_MODE`)
-
-For local development, you can disable dashboard and admin endpoint authentication by setting:
-
-```env
-DEV_MODE=true
-```
-
-This bypasses the `ADMIN_API_KEY` check on all admin endpoints (`/dashboard`, `/api/dashboard-stats`, `/api/broadcast`, etc.), making it easier to test without managing API keys locally.
-
-**Acceptable values:** `true`, `1`, or `yes` (case-insensitive)
-
-**⚠️ Safety guard:** If `DEV_MODE` is enabled on **Render** (production), the app automatically forces it off and logs a critical warning. This prevents accidental exposure of unprotected admin endpoints.
-
-**When to use:**
-- ✅ Local development and testing
-- ❌ Production deployments (will be auto-disabled on Render)
-
 ---
 
 ## 🚀 Running locally

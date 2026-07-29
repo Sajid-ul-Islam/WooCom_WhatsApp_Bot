@@ -1,6 +1,7 @@
 import re
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from context import BotContext
 from i18n import get_text
@@ -8,6 +9,7 @@ from i18n import get_text
 # Import modularized handlers
 from shopping_handlers import (
     handle_main_menu,
+    handle_search_prompt,
     handle_categories,
     handle_category_products,
     handle_product_detail,
@@ -49,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 ACTION_HANDLERS = {
     "menu_main": handle_main_menu,
+    "menu_search": handle_search_prompt,
     "menu_categories": handle_categories,
     "menu_cart": handle_view_cart,
     "menu_orders": handle_view_orders,
@@ -290,6 +293,23 @@ async def process_incoming_message(
             contact_name = profile.get("name")
         await ctx.db.upsert_user(from_number, first_name=contact_name)
 
+        # Append incoming customer text to chat_history for dashboard live chat
+        if incoming_text:
+            try:
+                history = await ctx.db.get_user_history(from_number)
+                history.append({
+                    "role": "user",
+                    "sender": "Customer",
+                    "content": incoming_text,
+                    "text": incoming_text,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                })
+                if len(history) > 50:
+                    history = history[-50:]
+                await ctx.db.update_user_history(from_number, history)
+            except Exception as e:
+                logger.warning(f"Failed to record customer message to chat_history: {e}")
+
         # --- Resume bot check (always runs even if paused) ---
         if incoming_text:
             text_lower = incoming_text.lower()
@@ -331,6 +351,11 @@ async def process_incoming_message(
 
         if user_state == "waiting_for_cancel_id" and incoming_text:
             await handle_cancel_order_request(ctx, from_number, incoming_text)
+            return
+
+        if user_state == "search_pending" and incoming_text:
+            await ctx.db.set_user_state(from_number, "idle")
+            await handle_ai_search(ctx, from_number, incoming_text)
             return
 
         if action_id:
