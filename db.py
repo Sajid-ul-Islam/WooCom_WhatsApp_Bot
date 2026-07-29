@@ -19,14 +19,14 @@ class DatabaseClient:
     async def connect(self):
         if self.client is not None:
             return
-        if self.url and self.key:
+        if self.url and self.key and "your-project-id" not in self.url:
             try:
                 self.client = await create_async_client(self.url, self.key)
                 logger.info("✅ Supabase connected successfully for WhatsApp bot")
             except Exception as e:
                 logger.error(f"Failed to connect to Supabase: {e}")
         else:
-            logger.warning("Supabase credentials not found in environment")
+            logger.warning("⚠️ Supabase credentials missing or set to placeholder in .env file.")
 
     # ==================== HELPERS ====================
 
@@ -396,7 +396,10 @@ class DatabaseClient:
                 stats["carts_count"] = sum(1 for c in carts_res.data if c.get("items"))
                 
         except Exception as e:
-            logger.error(f"Error fetching dashboard stats: {e}")
+            if "Name or service not known" in str(e) or "gaierror" in str(e) or "getaddrinfo" in str(e):
+                logger.warning(f"⚠️ Could not reach Supabase host (DNS/Network resolution failed). Check SUPABASE_URL in your .env file. Error: {e}")
+            else:
+                logger.error(f"Error fetching dashboard stats: {e}")
             
         return stats
 
